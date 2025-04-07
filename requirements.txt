@@ -1,0 +1,12 @@
+# Spotify and downloading dependencies
+spotipy==2.23.0
+requests==2.31.0
+python-dotenv==1.0.0
+beautifulsoup4==4.12.2
+
+# Audio processing dependencies
+transformers
+librosa
+numpy
+torch
+soundfile 

@@ -9,6 +9,11 @@ from pathlib import Path
 import time
 from typing import Optional, Dict, Any
 from bs4 import BeautifulSoup
+import torch
+import numpy as np
+from transformers import ClapModel, ClapProcessor
+import librosa
+import sys
 
 # Load environment variables
 load_dotenv()
@@ -23,9 +28,18 @@ DEEZER_API_BASE = "https://api.deezer.com"
 DEEZER_RATE_LIMIT = 50  # requests per second
 DEEZER_REQUEST_DELAY = 1.0 / DEEZER_RATE_LIMIT  # delay between requests in seconds
 
-# Create output directory for previews
-PREVIEW_DIR = Path('data/previews')
+# Directory setup
+BASE_DIR = Path(__file__).parent  # Gets us to the indexing directory
+PREVIEW_DIR = BASE_DIR / "data/previews"
+EMBEDDINGS_DIR = BASE_DIR / "data/embeddings"
 PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
+EMBEDDINGS_DIR.mkdir(parents=True, exist_ok=True)
+
+# Set up CLAP model
+device = torch.device("cpu")
+print("Using CPU")
+model = ClapModel.from_pretrained("laion/larger_clap_music_and_speech").to(device)
+processor = ClapProcessor.from_pretrained("laion/larger_clap_music_and_speech")
 
 def setup_spotify():
     """Set up Spotify client with authentication."""
@@ -60,7 +74,6 @@ def get_liked_songs(sp):
     tracks = results['items']
     
     print(f"Found {len(tracks)} liked songs")
-    
     
     # Get all tracks (handle pagination)
     while results['next']:
@@ -154,40 +167,113 @@ def get_safe_filename(track_name: str, artist_name: str) -> str:
     filename = f"{artist_name} - {track_name}.mp3"
     return "".join(c for c in filename if c.isalnum() or c in (' ', '-', '_', '.'))
 
-def download_preview(track: Dict[str, Any], output_dir: Path) -> None:
-    """Download the preview of a track using Deezer's API."""
+def encode_audio(audio_file_path):
+    """Encode audio file into CLAP embedding."""
+    try:
+        # Load your audio file
+        audio_array, sampling_rate = librosa.load(audio_file_path, sr=48000)  # CLAP expects 48kHz
+
+        # Process the audio and get embeddings
+        inputs = processor(
+            audios=audio_array, 
+            sampling_rate=48000,  # Explicitly pass sampling rate
+            return_tensors="pt"
+        )
+        
+        # Move inputs to the same device as the model
+        inputs = {k: v.to(device) if hasattr(v, "to") else v for k, v in inputs.items()}
+
+        # Extract features
+        with torch.no_grad():
+            audio_embeddings = model.get_audio_features(**inputs)
+
+        # Convert to numpy if needed
+        audio_embeddings_np = audio_embeddings.detach().cpu().numpy()
+        return audio_embeddings_np
+    except Exception as e:
+        print(f"\nError in encode_audio for {audio_file_path}:")
+        print(f"Type: {type(e).__name__}")
+        print(f"Details: {str(e)}")
+        raise
+
+def process_track(track: Dict[str, Any]) -> None:
+    """Download and process a single track through the entire pipeline."""
     track_name = track['track']['name']
     artist_name = track['track']['artists'][0]['name']
     
-    # Create a safe filename
+    # Create safe filenames for both MP3 and embedding
     filename = get_safe_filename(track_name, artist_name)
-    filepath = output_dir / filename
+    mp3_path = PREVIEW_DIR / filename
+    embedding_path = EMBEDDINGS_DIR / filename.replace('.mp3', '.npy')
     
-    # Check if file already exists
-    if filepath.exists():
-        print(f"Skipping {track_name} - already downloaded")
+    # Skip if embedding already exists
+    if embedding_path.exists():
+        print(f"Skipping {track_name} - embedding already exists")
         return
     
     print(f"Processing: {track_name} by {artist_name}")
     
-    # Search for the track on Deezer
-    deezer_track = search_deezer_track(track_name, artist_name)
+    try:
+        # Step 1: Download from Deezer
+        deezer_track = search_deezer_track(track_name, artist_name)
+        if not deezer_track or not deezer_track.get('preview'):
+            print(f"No preview available for {track_name}")
+            return
+        
+        preview_url = deezer_track['preview']
+        
+        # Download the preview
+        print(f"Downloading from: {preview_url}")
+        response = requests.get(preview_url)
+        if response.status_code == 200:
+            # Check if directory exists
+            PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
+            
+            with open(mp3_path, 'wb') as f:
+                f.write(response.content)
+            print(f"Downloaded preview for: {track_name}")
+            
+            # Check if file exists and is readable
+            if not mp3_path.exists():
+                print(f"Error: File {mp3_path} was not created successfully")
+                return
+                
+            if not os.access(mp3_path, os.R_OK):
+                print(f"Error: File {mp3_path} is not readable")
+                return
+            
+            try:
+                # Step 2: Generate embedding
+                print("Generating embedding...")
+                embedding = encode_audio(str(mp3_path))
+                
+                # Ensure embeddings directory exists
+                EMBEDDINGS_DIR.mkdir(parents=True, exist_ok=True)
+                
+                # Save embedding
+                np.save(embedding_path, embedding)
+                print(f"Saved embedding to {embedding_path}")
+                
+            except Exception as e:
+                print(f"Error generating embedding for {track_name}:")
+                print(f"Type: {type(e).__name__}")
+                print(f"Details: {str(e)}")
+            
+        else:
+            print(f"Failed to download preview for {track_name} (Status: {response.status_code})")
+        
+    except Exception as e:
+        print(f"Error processing {track_name}:")
+        print(f"Type: {type(e).__name__}")
+        print(f"Details: {str(e)}")
     
-    if not deezer_track or not deezer_track.get('preview'):
-        print(f"No preview available for {track_name}")
-        return
-    
-    preview_url = deezer_track['preview']
-    
-    # Download the preview
-    print(f"Downloading from: {preview_url}")
-    response = requests.get(preview_url)
-    if response.status_code == 200:
-        with open(filepath, 'wb') as f:
-            f.write(response.content)
-        print(f"Downloaded preview for: {track_name}")
-    else:
-        print(f"Failed to download preview for {track_name} (Status: {response.status_code})")
+    finally:
+        # Clean up MP3 file
+        if mp3_path.exists():
+            try:
+                mp3_path.unlink()
+            except Exception as e:
+                print(f"Warning: Could not delete temporary file {mp3_path}: {str(e)}")
 
 def main():
     # Check for required environment variables
@@ -195,24 +281,36 @@ def main():
         print("Error: SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET must be set in .env file")
         return
     
-    # Set up Spotify client
-    sp = setup_spotify()
-    
-    # Get liked songs
-    print("Fetching liked songs...")
-    tracks = get_liked_songs(sp)
-    print(f"Found {len(tracks)} liked songs")
-    
-    # Count existing files
-    existing_files = set(f.name for f in PREVIEW_DIR.glob("*.mp3"))
-    print(f"Found {len(existing_files)} existing preview files")
-    
-    # Download previews using Deezer
-    print("\nDownloading previews from Deezer...")
-    for track in tracks:
-        download_preview(track, PREVIEW_DIR)
-    
-    print("\nDownload complete!")
+    try:
+        # Set up Spotify client
+        print("Setting up Spotify client...")
+        sp = setup_spotify()
+        
+        # Get liked songs
+        print("\nFetching liked songs from Spotify...")
+        tracks = get_liked_songs(sp)
+        print(f"\nTotal tracks found: {len(tracks)}")
+        
+        # Count existing files
+        existing_files = set(f.name for f in EMBEDDINGS_DIR.glob("*.npy"))
+        print(f"Found {len(existing_files)} existing embedding files")
+        
+        # Process each track
+        print("\nStarting processing pipeline...")
+        for i, track in enumerate(tracks, 1):
+            print(f"\nProcessing track {i}/{len(tracks)}")
+            process_track(track)
+        
+        print("\nPipeline complete!")
+        
+    except KeyboardInterrupt:
+        print("\nProcessing interrupted. Progress has been saved.")
+    except Exception as e:
+        print(f"\nUnexpected error in main processing loop:")
+        print(f"Type: {type(e).__name__}")
+        print(f"Details: {str(e)}")
+        return 1
+    return 0
 
 if __name__ == "__main__":
-    main() 
+    sys.exit(main()) 

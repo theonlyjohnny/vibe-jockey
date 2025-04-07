@@ -2,3 +2,4 @@ transformers
 librosa
 numpy
 torch
+soundfile
