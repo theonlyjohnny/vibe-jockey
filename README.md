@@ -92,6 +92,18 @@ The following components are needed to complete the project:
    - Implement background job queue for processing
    - Add monitoring and error handling for long-running processes
 
+## Helpful Readings
+
+1. [CLAP (Contrastive Language-Audio Pretraining)](https://github.com/LAION-AI/CLAP?tab=readme-ov-file)
+   - Explains how the CLAP model works, which we use for generating semantic embeddings of songs
+   - Details the architecture and training process of the model
+   - Provides implementation details and usage examples
+
+2. [Vector Embeddings in RAG Applications](https://wandb.ai/mostafaibrahim17/ml-articles/reports/Vector-Embeddings-in-RAG-Applications--Vmlldzo3OTk1NDA5)
+   - Explains how vector embeddings are used in Retrieval-Augmented Generation (RAG) systems
+   - Relevant to our approach of using semantic embeddings to find similar songs
+   - Provides insights into vector similarity search and database implementations
+
 ## Notes
 
 - Preview files are saved as MP3s with the format: `Artist - Song Title.mp3`
