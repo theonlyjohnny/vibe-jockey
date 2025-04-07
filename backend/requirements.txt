@@ -10,3 +10,4 @@ librosa
 numpy
 torch
 soundfile 
+supabase
