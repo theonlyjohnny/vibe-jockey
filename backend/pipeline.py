@@ -7,20 +7,54 @@ import json
 import re
 from pathlib import Path
 import time
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from bs4 import BeautifulSoup
 import torch
 import numpy as np
 from transformers import ClapModel, ClapProcessor
 import librosa
 import sys
+import logging
+from vector_store import SupabaseVectorStore, SupabaseConnectionError
+
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# Custom exceptions
+class SpotifyAuthError(Exception):
+    """Raised when Spotify authentication fails."""
+    pass
+
+class AudioProcessingError(Exception):
+    """Raised when audio processing or embedding generation fails."""
+    pass
+
+class PreviewDownloadError(Exception):
+    """Raised when preview download fails."""
+    pass
 
 # Load environment variables
 load_dotenv()
 
+# Validate environment variables
+required_env_vars = {
+    'SPOTIFY_CLIENT_ID': os.getenv('SPOTIFY_CLIENT_ID'),
+    'SPOTIFY_CLIENT_SECRET': os.getenv('SPOTIFY_CLIENT_SECRET'),
+    'SUPABASE_URL': os.getenv('SUPABASE_URL'),
+    'SUPABASE_KEY': os.getenv('SUPABASE_KEY')
+}
+
+missing_vars = [var for var, value in required_env_vars.items() if not value]
+if missing_vars:
+    raise ValueError(f"Missing required environment variables: {', '.join(missing_vars)}")
+
 # Spotify API credentials
-SPOTIFY_CLIENT_ID = os.getenv('SPOTIFY_CLIENT_ID')
-SPOTIFY_CLIENT_SECRET = os.getenv('SPOTIFY_CLIENT_SECRET')
+SPOTIFY_CLIENT_ID = required_env_vars['SPOTIFY_CLIENT_ID']
+SPOTIFY_CLIENT_SECRET = required_env_vars['SPOTIFY_CLIENT_SECRET']
 SPOTIFY_REDIRECT_URI = os.getenv('SPOTIFY_REDIRECT_URI', 'http://localhost:8888/callback')
 
 # Deezer API configuration
@@ -29,59 +63,105 @@ DEEZER_RATE_LIMIT = 50  # requests per second
 DEEZER_REQUEST_DELAY = 1.0 / DEEZER_RATE_LIMIT  # delay between requests in seconds
 
 # Directory setup
-BASE_DIR = Path(__file__).parent  # Gets us to the indexing directory
+BASE_DIR = Path(__file__).parent
 PREVIEW_DIR = BASE_DIR / "data/previews"
 EMBEDDINGS_DIR = BASE_DIR / "data/embeddings"
-PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
-EMBEDDINGS_DIR.mkdir(parents=True, exist_ok=True)
+
+try:
+    PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
+    EMBEDDINGS_DIR.mkdir(parents=True, exist_ok=True)
+except Exception as e:
+    logger.error(f"Failed to create required directories: {e}")
+    raise
 
 # Set up CLAP model
-device = torch.device("cpu")
-print("Using CPU")
-model = ClapModel.from_pretrained("laion/larger_clap_music_and_speech").to(device)
-processor = ClapProcessor.from_pretrained("laion/larger_clap_music_and_speech")
+try:
+    device = torch.device("cpu")
+    logger.info("Using CPU for CLAP model")
+    model = ClapModel.from_pretrained("laion/larger_clap_music_and_speech").to(device)
+    processor = ClapProcessor.from_pretrained("laion/larger_clap_music_and_speech")
+except Exception as e:
+    logger.error(f"Failed to initialize CLAP model: {e}")
+    raise
 
 def setup_spotify():
-    """Set up Spotify client with authentication."""
-    auth_manager = SpotifyOAuth(
-        client_id=SPOTIFY_CLIENT_ID,
-        client_secret=SPOTIFY_CLIENT_SECRET,
-        redirect_uri=SPOTIFY_REDIRECT_URI,
-        scope='user-library-read',
-        open_browser=False  # Prevent automatic browser opening
-    )
+    """Set up Spotify client with authentication.
     
-    # Check if we need to get a new token
-    if not auth_manager.get_cached_token():
-        # Get the authorization URL
-        auth_url = auth_manager.get_authorize_url()
-        print("\n----------------------------------------")
-        print("Please navigate to this URL in your browser:")
-        print(auth_url)
-        print("----------------------------------------\n")
+    Returns:
+        Tuple[spotipy.Spotify, str]: Tuple containing authenticated Spotify client and user ID
         
-        # Ask for the redirect URL after authentication
-        code = input("After authorizing, paste the code query parameter from the redirect url here: ")
+    Raises:
+        SpotifyAuthError: If authentication fails
+    """
+    try:
+        auth_manager = SpotifyOAuth(
+            client_id=SPOTIFY_CLIENT_ID,
+            client_secret=SPOTIFY_CLIENT_SECRET,
+            redirect_uri=SPOTIFY_REDIRECT_URI,
+            scope='user-library-read',
+            open_browser=False
+        )
         
-        # Get access token using the code
-        auth_manager.get_access_token(code)
-    
-    return spotipy.Spotify(auth_manager=auth_manager)
+        if not auth_manager.get_cached_token():
+            auth_url = auth_manager.get_authorize_url()
+            logger.info("\n----------------------------------------")
+            logger.info("Please navigate to this URL in your browser:")
+            logger.info(auth_url)
+            logger.info("----------------------------------------\n")
+            
+            code = input("After authorizing, paste the code query parameter from the redirect url here: ")
+            
+            try:
+                auth_manager.get_access_token(code)
+            except Exception as e:
+                raise SpotifyAuthError(f"Failed to get access token: {e}")
+        
+        client = spotipy.Spotify(auth_manager=auth_manager)
+        
+        # Test the client and get user ID
+        try:
+            user_info = client.current_user()
+            user_id = user_info['id']
+            logger.info("Successfully authenticated with Spotify")
+            return client, user_id
+        except Exception as e:
+            raise SpotifyAuthError(f"Failed to verify Spotify client: {e}")
+            
+    except Exception as e:
+        raise SpotifyAuthError(f"Failed to set up Spotify client: {e}")
 
-def get_liked_songs(sp):
-    """Fetch all liked songs from the user's library."""
-    results = sp.current_user_saved_tracks()
-    tracks = results['items']
+def get_liked_songs(sp) -> List[Dict[str, Any]]:
+    """Fetch all liked songs from the user's library.
     
-    print(f"Found {len(tracks)} liked songs")
-    
-    # Get all tracks (handle pagination)
-    while results['next']:
-        results = sp.next(results)
-        print(f"Found {len(results['items'])} liked songs")
-        tracks.extend(results['items'])
-    
-    return tracks
+    Args:
+        sp: Authenticated Spotify client
+        
+    Returns:
+        List[Dict[str, Any]]: List of track information
+        
+    Raises:
+        SpotifyAuthError: If API calls fail
+    """
+    try:
+        results = sp.current_user_saved_tracks()
+        tracks = results['items']
+        
+        logger.info(f"Found initial batch of {len(tracks)} liked songs")
+        
+        while results['next']:
+            try:
+                results = sp.next(results)
+                logger.info(f"Found additional {len(results['items'])} liked songs")
+                tracks.extend(results['items'])
+            except Exception as e:
+                logger.error(f"Error during pagination: {e}")
+                break
+        
+        logger.info(f"Total tracks found: {len(tracks)}")
+        return tracks
+        
+    except Exception as e:
+        raise SpotifyAuthError(f"Failed to fetch liked songs: {e}")
 
 def get_preview_url_from_embed(track_id):
     """Workaround to get preview URL from Spotify's embed page."""
@@ -167,150 +247,219 @@ def get_safe_filename(track_name: str, artist_name: str) -> str:
     filename = f"{artist_name} - {track_name}.mp3"
     return "".join(c for c in filename if c.isalnum() or c in (' ', '-', '_', '.'))
 
-def encode_audio(audio_file_path):
-    """Encode audio file into CLAP embedding."""
-    try:
-        # Load your audio file
-        audio_array, sampling_rate = librosa.load(audio_file_path, sr=48000)  # CLAP expects 48kHz
-
-        # Process the audio and get embeddings
-        inputs = processor(
-            audios=audio_array, 
-            sampling_rate=48000,  # Explicitly pass sampling rate
-            return_tensors="pt"
-        )
+def encode_audio(audio_file_path: str) -> np.ndarray:
+    """Encode audio file into CLAP embedding.
+    
+    Args:
+        audio_file_path: Path to the audio file
         
-        # Move inputs to the same device as the model
-        inputs = {k: v.to(device) if hasattr(v, "to") else v for k, v in inputs.items()}
-
-        # Extract features
-        with torch.no_grad():
-            audio_embeddings = model.get_audio_features(**inputs)
-
-        # Convert to numpy if needed
-        audio_embeddings_np = audio_embeddings.detach().cpu().numpy()
-        return audio_embeddings_np
-    except Exception as e:
-        print(f"\nError in encode_audio for {audio_file_path}:")
-        print(f"Type: {type(e).__name__}")
-        print(f"Details: {str(e)}")
-        raise
-
-def process_track(track: Dict[str, Any]) -> None:
-    """Download and process a single track through the entire pipeline."""
-    track_name = track['track']['name']
-    artist_name = track['track']['artists'][0]['name']
-    
-    # Create safe filenames for both MP3 and embedding
-    filename = get_safe_filename(track_name, artist_name)
-    mp3_path = PREVIEW_DIR / filename
-    embedding_path = EMBEDDINGS_DIR / filename.replace('.mp3', '.npy')
-    
-    # Skip if embedding already exists
-    if embedding_path.exists():
-        print(f"Skipping {track_name} - embedding already exists")
-        return
-    
-    print(f"Processing: {track_name} by {artist_name}")
-    
+    Returns:
+        np.ndarray: Audio embedding
+        
+    Raises:
+        AudioProcessingError: If encoding fails
+    """
     try:
-        # Step 1: Download from Deezer
+        # Validate file exists and is readable
+        if not os.path.exists(audio_file_path):
+            raise AudioProcessingError(f"Audio file does not exist: {audio_file_path}")
+        
+        if not os.access(audio_file_path, os.R_OK):
+            raise AudioProcessingError(f"Audio file is not readable: {audio_file_path}")
+        
+        # Load and validate audio file
+        try:
+            audio_array, sampling_rate = librosa.load(audio_file_path, sr=48000)
+        except Exception as e:
+            raise AudioProcessingError(f"Failed to load audio file: {e}")
+            
+        if len(audio_array) == 0:
+            raise AudioProcessingError("Audio file is empty")
+            
+        # Process audio
+        try:
+            inputs = processor(
+                audios=audio_array,
+                sampling_rate=48000,
+                return_tensors="pt"
+            )
+        except Exception as e:
+            raise AudioProcessingError(f"Failed to process audio: {e}")
+            
+        # Move inputs to device
+        try:
+            inputs = {k: v.to(device) if hasattr(v, "to") else v for k, v in inputs.items()}
+        except Exception as e:
+            raise AudioProcessingError(f"Failed to move inputs to device: {e}")
+            
+        # Generate embeddings
+        try:
+            with torch.no_grad():
+                audio_embeddings = model.get_audio_features(**inputs)
+        except Exception as e:
+            raise AudioProcessingError(f"Failed to generate embeddings: {e}")
+            
+        # Convert to numpy
+        try:
+            audio_embeddings_np = audio_embeddings.detach().cpu().numpy()
+            return audio_embeddings_np
+        except Exception as e:
+            raise AudioProcessingError(f"Failed to convert embeddings to numpy: {e}")
+            
+    except AudioProcessingError:
+        raise
+    except Exception as e:
+        raise AudioProcessingError(f"Unexpected error in encode_audio: {e}")
+
+def process_track(track: Dict[str, Any], user_id: str) -> None:
+    """Download and process a single track through the entire pipeline.
+    
+    Args:
+        track: Track information dictionary
+        user_id: Spotify user ID
+        
+    Raises:
+        PreviewDownloadError: If preview download fails
+        AudioProcessingError: If audio processing fails
+        SupabaseConnectionError: If vector storage fails
+    """
+    try:
+        track_name = track['track']['name']
+        artist_name = track['track']['artists'][0]['name']
+        
+        # Create safe filenames
+        filename = get_safe_filename(track_name, artist_name)
+        mp3_path = PREVIEW_DIR / filename
+        embedding_path = EMBEDDINGS_DIR / filename.replace('.mp3', '.npy')
+        
+        # Skip if embedding exists
+        if embedding_path.exists():
+            logger.info(f"Skipping {track_name} - embedding already exists")
+            return
+        
+        logger.info(f"Processing: {track_name} by {artist_name}")
+        
+        # Step 1: Get preview URL
         deezer_track = search_deezer_track(track_name, artist_name)
         if not deezer_track or not deezer_track.get('preview'):
-            print(f"No preview available for {track_name}")
-            return
+            raise PreviewDownloadError(f"No preview available for {track_name}")
         
         preview_url = deezer_track['preview']
         
-        # Download the preview
-        print(f"Downloading from: {preview_url}")
-        response = requests.get(preview_url)
-        if response.status_code == 200:
-            # Check if directory exists
-            PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
-            
+        # Download preview
+        logger.info(f"Downloading from: {preview_url}")
+        try:
+            response = requests.get(preview_url, timeout=30)
+            response.raise_for_status()
+        except requests.exceptions.RequestException as e:
+            raise PreviewDownloadError(f"Failed to download preview: {e}")
+        
+        # Save preview file
+        try:
             with open(mp3_path, 'wb') as f:
                 f.write(response.content)
-            print(f"Downloaded preview for: {track_name}")
-            
-            # Check if file exists and is readable
-            if not mp3_path.exists():
-                print(f"Error: File {mp3_path} was not created successfully")
-                return
-                
-            if not os.access(mp3_path, os.R_OK):
-                print(f"Error: File {mp3_path} is not readable")
-                return
-            
-            try:
-                # Step 2: Generate embedding
-                print("Generating embedding...")
-                embedding = encode_audio(str(mp3_path))
-                
-                # Ensure embeddings directory exists
-                EMBEDDINGS_DIR.mkdir(parents=True, exist_ok=True)
-                
-                # Save embedding
-                np.save(embedding_path, embedding)
-                print(f"Saved embedding to {embedding_path}")
-                
-            except Exception as e:
-                print(f"Error generating embedding for {track_name}:")
-                print(f"Type: {type(e).__name__}")
-                print(f"Details: {str(e)}")
-            
-        else:
-            print(f"Failed to download preview for {track_name} (Status: {response.status_code})")
+            logger.info(f"Downloaded preview for: {track_name}")
+        except IOError as e:
+            raise PreviewDownloadError(f"Failed to save preview file: {e}")
         
-    except Exception as e:
-        print(f"Error processing {track_name}:")
-        print(f"Type: {type(e).__name__}")
-        print(f"Details: {str(e)}")
-    
-    finally:
-        # Clean up MP3 file
-        if mp3_path.exists():
+        # Validate downloaded file
+        if not mp3_path.exists() or not os.access(mp3_path, os.R_OK):
+            raise PreviewDownloadError(f"Preview file is not accessible: {mp3_path}")
+        
+        try:
+            # Generate embedding
+            logger.info("Generating embedding...")
+            embedding = encode_audio(str(mp3_path))
+            
+            # Save embedding locally
             try:
-                mp3_path.unlink()
+                np.save(embedding_path, embedding)
+                logger.info(f"Saved embedding to {embedding_path}")
             except Exception as e:
-                print(f"Warning: Could not delete temporary file {mp3_path}: {str(e)}")
+                raise AudioProcessingError(f"Failed to save embedding: {e}")
+            
+            # Store in vector database
+            try:
+                vector_store = SupabaseVectorStore(
+                    table_name="song_embeddings",
+                    embedding_column="embedding",
+                    content_column="preview_url",
+                    metadata_columns=["title", "artist", "genre", "user_id"]
+                )
+                
+                metadata = {
+                    "title": track_name,
+                    "artist": artist_name,
+                    "genre": track['track'].get('album', {}).get('genres', ['unknown'])[0] if track['track'].get('album', {}).get('genres') else 'unknown',
+                    "user_id": user_id
+                }
+                
+                vector_store.add_embeddings(
+                    embeddings=[embedding[0]],
+                    contents=[preview_url],
+                    metadata=[metadata]
+                )
+                logger.info(f"Stored embedding in vector database for {track_name}")
+                
+            except Exception as e:
+                logger.error(f"Failed to store embedding in vector database: {e}")
+                # Don't re-raise here - we've already saved the embedding locally
+                
+        finally:
+            # Clean up MP3 file
+            if mp3_path.exists():
+                try:
+                    mp3_path.unlink()
+                except Exception as e:
+                    logger.warning(f"Could not delete temporary file {mp3_path}: {e}")
+                    
+    except (PreviewDownloadError, AudioProcessingError, SupabaseConnectionError) as e:
+        logger.error(f"Error processing {track_name}: {str(e)}")
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error processing {track_name}: {str(e)}")
+        raise
 
-def main():
-    # Check for required environment variables
-    if not SPOTIFY_CLIENT_ID or not SPOTIFY_CLIENT_SECRET:
-        print("Error: SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET must be set in .env file")
-        return
+def main() -> int:
+    """Main processing pipeline.
     
+    Returns:
+        int: Exit code (0 for success, 1 for error)
+    """
     try:
         # Set up Spotify client
-        print("Setting up Spotify client...")
-        sp = setup_spotify()
+        logger.info("Setting up Spotify client...")
+        sp, user_id = setup_spotify()
         
         # Get liked songs
-        print("\nFetching liked songs from Spotify...")
+        logger.info("\nFetching liked songs from Spotify...")
         tracks = get_liked_songs(sp)
-        print(f"\nTotal tracks found: {len(tracks)}")
+        logger.info(f"\nTotal tracks found: {len(tracks)}")
         
         # Count existing files
         existing_files = set(f.name for f in EMBEDDINGS_DIR.glob("*.npy"))
-        print(f"Found {len(existing_files)} existing embedding files")
+        logger.info(f"Found {len(existing_files)} existing embedding files")
         
         # Process each track
-        print("\nStarting processing pipeline...")
+        logger.info("\nStarting processing pipeline...")
         for i, track in enumerate(tracks, 1):
-            print(f"\nProcessing track {i}/{len(tracks)}")
-            process_track(track)
+            try:
+                logger.info(f"\nProcessing track {i}/{len(tracks)}")
+                process_track(track, user_id)
+            except Exception as e:
+                logger.error(f"Failed to process track: {e}")
+                # Continue with next track
+                continue
         
-        print("\nPipeline complete!")
+        logger.info("\nPipeline complete!")
+        return 0
         
     except KeyboardInterrupt:
-        print("\nProcessing interrupted. Progress has been saved.")
+        logger.info("\nProcessing interrupted. Progress has been saved.")
+        return 0
     except Exception as e:
-        print(f"\nUnexpected error in main processing loop:")
-        print(f"Type: {type(e).__name__}")
-        print(f"Details: {str(e)}")
+        logger.error(f"\nUnexpected error in main processing loop: {e}")
         return 1
-    return 0
 
 if __name__ == "__main__":
     sys.exit(main()) 
