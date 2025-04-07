@@ -1,0 +1,5 @@
+.cache
+venv
+data
+.env
+.DS_Store
