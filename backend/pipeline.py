@@ -64,15 +64,6 @@ DEEZER_REQUEST_DELAY = 1.0 / DEEZER_RATE_LIMIT  # delay between requests in seco
 
 # Directory setup
 BASE_DIR = Path(__file__).parent
-PREVIEW_DIR = BASE_DIR / "data/previews"
-EMBEDDINGS_DIR = BASE_DIR / "data/embeddings"
-
-try:
-    PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
-    EMBEDDINGS_DIR.mkdir(parents=True, exist_ok=True)
-except Exception as e:
-    logger.error(f"Failed to create required directories: {e}")
-    raise
 
 # Set up CLAP model
 try:
@@ -287,24 +278,15 @@ def encode_audio(audio_file_path: str) -> np.ndarray:
             raise AudioProcessingError(f"Failed to process audio: {e}")
             
         # Move inputs to device
-        try:
-            inputs = {k: v.to(device) if hasattr(v, "to") else v for k, v in inputs.items()}
-        except Exception as e:
-            raise AudioProcessingError(f"Failed to move inputs to device: {e}")
+        inputs = {k: v.to(device) if hasattr(v, "to") else v for k, v in inputs.items()}
             
         # Generate embeddings
-        try:
-            with torch.no_grad():
-                audio_embeddings = model.get_audio_features(**inputs)
-        except Exception as e:
-            raise AudioProcessingError(f"Failed to generate embeddings: {e}")
+        with torch.no_grad():
+            audio_embeddings = model.get_audio_features(**inputs)
             
-        # Convert to numpy
-        try:
-            audio_embeddings_np = audio_embeddings.detach().cpu().numpy()
-            return audio_embeddings_np
-        except Exception as e:
-            raise AudioProcessingError(f"Failed to convert embeddings to numpy: {e}")
+        embedding = audio_embeddings.detach().cpu().numpy()
+            
+        return embedding
             
     except AudioProcessingError:
         raise
@@ -312,30 +294,19 @@ def encode_audio(audio_file_path: str) -> np.ndarray:
         raise AudioProcessingError(f"Unexpected error in encode_audio: {e}")
 
 def process_track(track: Dict[str, Any], user_id: str) -> None:
-    """Download and process a single track through the entire pipeline.
+    """Process a single track through the pipeline without downloading.
     
     Args:
         track: Track information dictionary
         user_id: Spotify user ID
         
     Raises:
-        PreviewDownloadError: If preview download fails
         AudioProcessingError: If audio processing fails
         SupabaseConnectionError: If vector storage fails
     """
     try:
         track_name = track['track']['name']
         artist_name = track['track']['artists'][0]['name']
-        
-        # Create safe filenames
-        filename = get_safe_filename(track_name, artist_name)
-        mp3_path = PREVIEW_DIR / filename
-        embedding_path = EMBEDDINGS_DIR / filename.replace('.mp3', '.npy')
-        
-        # Skip if embedding exists
-        if embedding_path.exists():
-            logger.info(f"Skipping {track_name} - embedding already exists")
-            return
         
         logger.info(f"Processing: {track_name} by {artist_name}")
         
@@ -346,37 +317,51 @@ def process_track(track: Dict[str, Any], user_id: str) -> None:
         
         preview_url = deezer_track['preview']
         
-        # Download preview
-        logger.info(f"Downloading from: {preview_url}")
+        # Stream audio data
+        logger.info(f"Streaming from: {preview_url}")
         try:
             response = requests.get(preview_url, timeout=30)
             response.raise_for_status()
-        except requests.exceptions.RequestException as e:
-            raise PreviewDownloadError(f"Failed to download preview: {e}")
-        
-        # Save preview file
-        try:
-            with open(mp3_path, 'wb') as f:
-                f.write(response.content)
-            logger.info(f"Downloaded preview for: {track_name}")
-        except IOError as e:
-            raise PreviewDownloadError(f"Failed to save preview file: {e}")
-        
-        # Validate downloaded file
-        if not mp3_path.exists() or not os.access(mp3_path, os.R_OK):
-            raise PreviewDownloadError(f"Preview file is not accessible: {mp3_path}")
-        
-        try:
+            
+            # Load audio data directly from memory using pydub
+            import io
+            from pydub import AudioSegment
+            audio_data = io.BytesIO(response.content)
+            
+            # Convert MP3 to WAV in memory
+            audio_segment = AudioSegment.from_mp3(audio_data)
+            wav_data = io.BytesIO()
+            audio_segment.export(wav_data, format="wav")
+            wav_data.seek(0)
+            
+            # Use librosa to read the WAV data
+            import librosa
+            audio_array, sampling_rate = librosa.load(wav_data, sr=48000, mono=True)
+            
+            if len(audio_array) == 0:
+                raise AudioProcessingError("Audio file is empty")
+            
             # Generate embedding
             logger.info("Generating embedding...")
-            embedding = encode_audio(str(mp3_path))
             
-            # Save embedding locally
+            # Process audio
             try:
-                np.save(embedding_path, embedding)
-                logger.info(f"Saved embedding to {embedding_path}")
+                inputs = processor(
+                    audios=audio_array,
+                    sampling_rate=48000,
+                    return_tensors="pt"
+                )
             except Exception as e:
-                raise AudioProcessingError(f"Failed to save embedding: {e}")
+                raise AudioProcessingError(f"Failed to process audio: {e}")
+            
+            # Move inputs to device
+            inputs = {k: v.to(device) if hasattr(v, "to") else v for k, v in inputs.items()}
+            
+            # Generate embeddings
+            with torch.no_grad():
+                audio_embeddings = model.get_audio_features(**inputs)
+            
+            embedding = audio_embeddings.detach().cpu().numpy()
             
             # Store in vector database
             try:
@@ -403,16 +388,11 @@ def process_track(track: Dict[str, Any], user_id: str) -> None:
                 
             except Exception as e:
                 logger.error(f"Failed to store embedding in vector database: {e}")
-                # Don't re-raise here - we've already saved the embedding locally
+                raise SupabaseConnectionError(f"Failed to store embedding: {e}")
                 
-        finally:
-            # Clean up MP3 file
-            if mp3_path.exists():
-                try:
-                    mp3_path.unlink()
-                except Exception as e:
-                    logger.warning(f"Could not delete temporary file {mp3_path}: {e}")
-                    
+        except requests.exceptions.RequestException as e:
+            raise AudioProcessingError(f"Failed to stream audio: {e}")
+            
     except (PreviewDownloadError, AudioProcessingError, SupabaseConnectionError) as e:
         logger.error(f"Error processing {track_name}: {str(e)}")
         raise
@@ -435,10 +415,6 @@ def main() -> int:
         logger.info("\nFetching liked songs from Spotify...")
         tracks = get_liked_songs(sp)
         logger.info(f"\nTotal tracks found: {len(tracks)}")
-        
-        # Count existing files
-        existing_files = set(f.name for f in EMBEDDINGS_DIR.glob("*.npy"))
-        logger.info(f"Found {len(existing_files)} existing embedding files")
         
         # Process each track
         logger.info("\nStarting processing pipeline...")
