@@ -121,19 +121,63 @@ def setup_spotify():
     except Exception as e:
         raise SpotifyAuthError(f"Failed to set up Spotify client: {e}")
 
-def get_liked_songs(sp) -> List[Dict[str, Any]]:
-    """Fetch all liked songs from the user's library.
+def create_record_id(track_name: str, artist_name: str) -> str:
+    """Create a consistent record ID from track and artist names.
+    
+    Args:
+        track_name: Name of the track
+        artist_name: Name of the artist
+        
+    Returns:
+        str: Formatted record ID
+    """
+    # Convert to lowercase and replace spaces/special chars with underscores
+    artist = ''.join(c.lower() if c.isalnum() else '_' for c in artist_name)
+    title = ''.join(c.lower() if c.isalnum() else '_' for c in track_name)
+    
+    # Remove consecutive underscores and leading/trailing underscores
+    artist = '_'.join(filter(None, artist.split('_'))).strip('_')
+    title = '_'.join(filter(None, title.split('_'))).strip('_')
+    
+    return f"{artist}_{title}"
+
+def get_liked_songs(sp, user_id: str) -> List[Dict[str, Any]]:
+    """Fetch all liked songs from the user's library and filter out existing ones.
     
     Args:
         sp: Authenticated Spotify client
+        user_id: Spotify user ID
         
     Returns:
-        List[Dict[str, Any]]: List of track information
+        List[Dict[str, Any]]: List of track information for songs not yet processed
         
     Raises:
         SpotifyAuthError: If API calls fail
     """
     try:
+        # First, get existing track IDs from database
+        try:
+            vector_store = SupabaseVectorStore(
+                table_name="song_embeddings",
+                embedding_column="embedding",
+                content_column="preview_url",
+                metadata_columns=["title", "artist", "genre", "user_id"]
+            )
+            
+            # Get all track IDs for this user
+            response = (vector_store.client.table("song_embeddings")
+                       .select("id")
+                       .execute())
+            
+            # Create set of existing IDs
+            existing_ids = {r['id'] for r in response.data}
+            logger.info(f"Found {len(existing_ids)} existing tracks in database")
+            
+        except Exception as e:
+            logger.warning(f"Failed to fetch existing tracks: {e}")
+            existing_ids = set()
+
+        # Fetch tracks from Spotify
         results = sp.current_user_saved_tracks()
         tracks = results['items']
         
@@ -148,8 +192,14 @@ def get_liked_songs(sp) -> List[Dict[str, Any]]:
                 logger.error(f"Error during pagination: {e}")
                 break
         
-        logger.info(f"Total tracks found: {len(tracks)}")
-        return tracks
+        # Filter out existing tracks using consistent ID format
+        new_tracks = [
+            track for track in tracks 
+            if create_record_id(track['track']['name'], track['track']['artists'][0]['name']) not in existing_ids
+        ]
+        
+        logger.info(f"Total new tracks to process: {len(new_tracks)} out of {len(tracks)}")
+        return new_tracks
         
     except Exception as e:
         raise SpotifyAuthError(f"Failed to fetch liked songs: {e}")
@@ -293,6 +343,36 @@ def encode_audio(audio_file_path: str) -> np.ndarray:
     except Exception as e:
         raise AudioProcessingError(f"Unexpected error in encode_audio: {e}")
 
+def check_track_exists(track_id: str, user_id: str) -> bool:
+    """Check if a track already exists in the database for the given user.
+    
+    Args:
+        track_id: Spotify track ID
+        user_id: Spotify user ID
+        
+    Returns:
+        bool: True if track exists, False otherwise
+    """
+    try:
+        vector_store = SupabaseVectorStore(
+            table_name="song_embeddings",
+            embedding_column="embedding",
+            content_column="preview_url",
+            metadata_columns=["title", "artist", "genre", "user_id"]
+        )
+        
+        # Query for exact match of track_id
+        response = (vector_store.client.table("song_embeddings")
+                   .select("id")
+                   .eq("id", f"{user_id}_{track_id}")
+                   .execute())
+        
+        return len(response.data) > 0
+        
+    except Exception as e:
+        logger.warning(f"Failed to check if track exists: {e}")
+        return False
+
 def process_track(track: Dict[str, Any], user_id: str) -> None:
     """Process a single track through the pipeline without downloading.
     
@@ -307,6 +387,9 @@ def process_track(track: Dict[str, Any], user_id: str) -> None:
     try:
         track_name = track['track']['name']
         artist_name = track['track']['artists'][0]['name']
+        
+        # Create consistent record ID
+        record_id = create_record_id(track_name, artist_name)
         
         logger.info(f"Processing: {track_name} by {artist_name}")
         
@@ -373,6 +456,7 @@ def process_track(track: Dict[str, Any], user_id: str) -> None:
                 )
                 
                 metadata = {
+                    "id": record_id,  # Use consistent record ID
                     "title": track_name,
                     "artist": artist_name,
                     "genre": track['track'].get('album', {}).get('genres', ['unknown'])[0] if track['track'].get('album', {}).get('genres') else 'unknown',
@@ -413,7 +497,7 @@ def main() -> int:
         
         # Get liked songs
         logger.info("\nFetching liked songs from Spotify...")
-        tracks = get_liked_songs(sp)
+        tracks = get_liked_songs(sp, user_id)
         logger.info(f"\nTotal tracks found: {len(tracks)}")
         
         # Process each track
