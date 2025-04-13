@@ -1,19 +1,17 @@
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
-import { createServerComponentClient } from '@/app/utils/supabase';
+import { createClient } from '@/app/utils/supabase/server';
 
 export default async function Dashboard() {
-  const supabase = await createServerComponentClient();
+  const supabase = createClient();
   
   try {
-    const { data: { session } } = await supabase.auth.getSession();
+    const { data: { user } } = await supabase.auth.getUser();
     
-    if (!session) {
-      console.error("No session found");
+    if (!user) {
+      console.error("No user found");
       redirect('/');
     }
-    
-    const user = session.user;
     
     return (
       <main className="flex min-h-screen flex-col items-center p-8 gap-8">
