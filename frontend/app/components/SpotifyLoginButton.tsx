@@ -14,7 +14,7 @@ export default function SpotifyLoginButton() {
         provider: 'spotify',
         options: {
           redirectTo: `${window.location.origin}/auth/callback/spotify`,
-          scopes: 'user-read-email user-read-private',
+          scopes: 'user-read-email user-read-private streaming user-read-playback-state user-modify-playback-state',
         },
       });
     } catch (error) {
