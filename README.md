@@ -160,4 +160,67 @@ The pipeline uses:
 - Preview files are saved as MP3s with the format: `Artist - Song Title.mp3`
 - Some songs may not have previews available
 - The downloading script handles pagination to fetch all liked songs
-- Authentication tokens are cached locally for future use 
+- Authentication tokens are cached locally for future use
+
+# Semantic DJ
+
+## Audio Processing API
+
+### Running in Production
+
+To run the API in production mode:
+
+```bash
+cd backend
+python run_production.py
+```
+
+This will:
+- Use multiple worker processes (2 * CPU cores + 1)
+- Enable proxy headers support for running behind a reverse proxy
+- Set up appropriate logging and other production settings
+
+For deployment on platforms like Heroku, a Procfile is included.
+
+### API Endpoints
+
+#### Process Track
+`POST /process-track`
+
+Required fields:
+- `audio_url`: URL of the audio file to process
+- `id`: ID to save the embedding with
+
+Optional fields:
+- `metadata`: Any additional metadata as key-value pairs
+
+Example request:
+```json
+{
+  "audio_url": "https://example.com/audio.mp3",
+  "id": "my_track_id_123",
+  "metadata": {
+    "title": "Song Title",
+    "artist": "Artist Name"
+  }
+}
+```
+
+Response:
+```json
+{
+  "status": "processing",
+  "message": "Processing track with ID: my_track_id_123",
+  "id": "my_track_id_123"
+}
+```
+
+#### Health Check
+`GET /health`
+
+Response:
+```json
+{
+  "status": "healthy"
+}
+``` 

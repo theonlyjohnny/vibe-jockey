@@ -17,4 +17,5 @@ requests>=2.31.0
 # Environment and logging
 python-dotenv>=1.0.0
 
-# Add any additional dependencies your vector_store implementation requires
+# Vector database
+supabase>=1.1.0

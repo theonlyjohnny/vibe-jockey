@@ -4,4 +4,7 @@ from typing import Dict, Any, Optional
 class TrackRequest(BaseModel):
     audio_url: str
     id: str
-    metadata: Optional[Dict[str, Any]] = {} 
+    metadata: Optional[Dict[str, Any]] = {}
+
+class ProcessUserTracksRequest(BaseModel):
+    user_id: str 

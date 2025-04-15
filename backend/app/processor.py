@@ -138,4 +138,85 @@ def process_track_with_metadata(id: str, audio_url: str, metadata: Dict[str, Any
         logger.info(f"Successfully processed track with ID: {id}")
     except Exception as e:
         logger.error(f"Error processing track: {str(e)}")
+        raise
+
+def process_user_tracks(user_id: str) -> Dict[str, Any]:
+    """Process all unembedded tracks for a specific user.
+    
+    Args:
+        user_id (str): The user ID to process tracks for
+        
+    Returns:
+        Dict[str, Any]: Status information about the processing
+    """
+    try:
+        logger.info(f"Processing unembedded tracks for user: {user_id}")
+        
+        # Initialize Supabase client to query directly
+        supabase_url = os.getenv("SUPABASE_URL")
+        supabase_key = os.getenv("SUPABASE_KEY")
+        
+        if not supabase_url or not supabase_key:
+            raise ValueError("SUPABASE_URL and SUPABASE_KEY must be set in environment variables")
+            
+        vector_store = SupabaseVectorStore()
+        client = vector_store.client
+        
+        # Query for tracks without embeddings for the specified user
+        response = client.table("song_embeddings").select("*").eq("user_id", user_id).is_("embedding", "null").execute()
+        
+        if hasattr(response, 'error') and response.error:
+            raise SupabaseConnectionError(f"Supabase query failed: {json.dumps(response.error)}")
+        
+        unembedded_tracks = response.data
+        logger.info(f"Found {len(unembedded_tracks)} unembedded tracks for user {user_id}")
+        
+        processed_count = 0
+        failed_tracks = []
+        
+        # Process each track
+        for track in unembedded_tracks:
+            try:
+                # Check if we have all required fields
+                if not track.get("preview_url"):
+                    logger.warning(f"Track {track.get('id')} has no preview URL, skipping")
+                    failed_tracks.append({
+                        "id": track.get("id"),
+                        "reason": "No preview URL"
+                    })
+                    continue
+                
+                # Extract metadata fields
+                metadata = {
+                    key: track.get(key) for key in track 
+                    if key not in ["id", "preview_url", "embedding", "created_at", "updated_at"]
+                }
+                
+                # Process the track
+                process_track_with_metadata(
+                    id=track.get("id"),
+                    audio_url=track.get("preview_url"),
+                    metadata=metadata
+                )
+                
+                processed_count += 1
+                logger.info(f"Processed track {track.get('id')} ({processed_count}/{len(unembedded_tracks)})")
+                
+            except Exception as e:
+                logger.error(f"Failed to process track {track.get('id')}: {str(e)}")
+                failed_tracks.append({
+                    "id": track.get("id"),
+                    "reason": str(e)
+                })
+        
+        return {
+            "status": "completed",
+            "total_tracks": len(unembedded_tracks),
+            "processed_tracks": processed_count,
+            "failed_tracks": failed_tracks,
+            "user_id": user_id
+        }
+        
+    except Exception as e:
+        logger.error(f"Error processing user tracks: {str(e)}")
         raise 
