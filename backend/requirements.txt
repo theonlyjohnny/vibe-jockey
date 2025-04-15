@@ -1,18 +1,20 @@
-# Spotify and downloading dependencies
-spotipy
-requests
-python-dotenv
-beautifulsoup4
+# FastAPI and ASGI server
+fastapi>=0.103.1
+uvicorn[standard]>=0.23.2
+python-multipart>=0.0.6
+pydantic>=2.4.2
 
-# Audio processing dependencies
-transformers
-librosa
-numpy<2.0
-torch
-soundfile
-supabase
-sentence-transformers
-scikit-learn
-scipy
-ffmpeg-python
-pydub
+# Audio processing
+torch>=2.0.0
+numpy>=1.24.0
+transformers>=4.34.0
+librosa>=0.10.0
+pydub>=0.25.1
+
+# Networking
+requests>=2.31.0
+
+# Environment and logging
+python-dotenv>=1.0.0
+
+# Add any additional dependencies your vector_store implementation requires
