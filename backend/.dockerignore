@@ -1,0 +1,49 @@
+# Version control
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+venv/
+.venv/
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# IDE specific files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment files (don't include secrets)
+.env
+.env.local
+
+# Logs and databases
+*.log
+*.sqlite
+
+# OS files
+.DS_Store
+Thumbs.db 
