@@ -1,6 +1,6 @@
-# Semantic DJ
+# Vibe Jockey
 
-A web application that uses semantic search to help you control your Spotify queue based on "vibes" rather than specific songs. Want to make your queue 10% more energetic? Or add some songs that are 40% more rat-like? Semantic DJ will help you find and queue songs that match your desired direction.
+A web application that uses semantic search to help you control your Spotify queue based on "vibes" rather than specific songs. Want to make your queue 10% more energetic? Or add some songs that are 40% more rat-like? Vibe Jockey will help you find and queue songs that match your desired direction.
 
 ## Project Structure
 
@@ -75,7 +75,7 @@ This will:
 
 ## Project Vision
 
-Semantic DJ aims to revolutionize how we interact with music by:
+Vibe Jockey aims to revolutionize how we interact with music by:
 - Using semantic embeddings to understand the "vibe" of songs
 - Allowing users to modify their queue based on semantic directions
 - Providing a web interface that integrates with the Spotify Player SDK

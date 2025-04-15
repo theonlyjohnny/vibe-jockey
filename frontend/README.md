@@ -1,4 +1,4 @@
-# Semantic DJ
+# Vibe Jockey
 
 A Next.js application using Supabase for Spotify OAuth authentication.
 

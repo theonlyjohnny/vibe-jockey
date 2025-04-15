@@ -12,7 +12,7 @@ export default async function Home() {
     return (
       <main className="flex min-h-screen flex-col items-center justify-center p-4 gap-4">
         <div className="z-10 max-w-5xl w-full items-center justify-center font-mono text-sm flex">
-          <h1 className="text-3xl font-bold text-black dark:text-white">Semantic DJ</h1>
+          <h1 className="text-3xl font-bold text-black dark:text-white">Vibe Jockey</h1>
         </div>
 
         <div className="flex flex-col items-center gap-4 w-full max-w-md">
@@ -42,7 +42,7 @@ export default async function Home() {
             </div>
           ) : (
             <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md w-full flex flex-col gap-4">
-              <h2 className="text-xl font-semibold text-black dark:text-white">Login to Semantic DJ</h2>
+              <h2 className="text-xl font-semibold text-black dark:text-white">Login to Vibe Jockey</h2>
               <p className="text-black dark:text-white">Connect with your Spotify account to get started</p>
               <SpotifyLoginButton />
             </div>
@@ -55,11 +55,11 @@ export default async function Home() {
     return (
       <main className="flex min-h-screen flex-col items-center justify-center p-4 gap-4">
         <div className="z-10 max-w-5xl w-full items-center justify-center font-mono text-sm flex">
-          <h1 className="text-3xl font-bold text-black dark:text-white">Semantic DJ</h1>
+          <h1 className="text-3xl font-bold text-black dark:text-white">Vibe Jockey</h1>
         </div>
         <div className="flex flex-col items-center gap-4 w-full max-w-md">
           <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md w-full flex flex-col gap-4">
-            <h2 className="text-xl font-semibold text-black dark:text-white">Login to Semantic DJ</h2>
+            <h2 className="text-xl font-semibold text-black dark:text-white">Login to Vibe Jockey</h2>
             <p className="text-black dark:text-white">Connect with your Spotify account to get started</p>
             <SpotifyLoginButton />
           </div>
