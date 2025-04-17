@@ -1,6 +1,5 @@
 import Link from 'next/link';
 import SpotifyLoginButton from './components/SpotifyLoginButton';
-import SpotifyPlayer from './components/SpotifyPlayer';
 import { createClient } from './utils/supabase/server';
 
 export default async function Home() {
@@ -30,8 +29,14 @@ export default async function Home() {
                   />
                 )}
                 <Link
+                  href="/player"
+                  className="w-full bg-green-500 text-white p-3 rounded-lg text-center hover:bg-green-600 transition text-lg font-semibold"
+                >
+                  Begin Vibe Jockey
+                </Link>
+                <Link
                   href="/dashboard"
-                  className="w-full bg-green-500 text-white p-2 rounded-lg text-center hover:bg-green-600 transition"
+                  className="w-full bg-blue-500 text-white p-2 rounded-lg text-center hover:bg-blue-600 transition"
                 >
                   Go to Dashboard
                 </Link>
@@ -42,7 +47,6 @@ export default async function Home() {
                   Logout
                 </Link>
               </div>
-              <SpotifyPlayer />
             </>
           ) : (
             <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md w-full flex flex-col gap-4">

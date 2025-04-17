@@ -204,41 +204,59 @@ export default function SpotifyPlayer() {
 
   if (isLoading) {
     return (
-      <div className="bg-gray-100 dark:bg-gray-800 p-4 rounded-lg">
-        <p className="text-center">Loading player...</p>
+      <div className="flex items-center justify-center w-full h-full">
+        <div className="w-64 h-64 bg-gray-200 dark:bg-gray-700 rounded-lg animate-pulse"></div>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="bg-gray-100 dark:bg-gray-800 p-4 rounded-lg">
+      <div className="flex items-center justify-center w-full h-full">
         <p className="text-center text-red-500">{error}</p>
       </div>
     );
   }
 
   return (
-    <div className="bg-white dark:bg-gray-800 p-4 rounded-lg shadow-md">
-      <div className="flex items-center gap-4 mb-4">
-        {currentTrack?.album?.images[0]?.url && (
+    <div className="flex flex-col items-center gap-4">
+      {currentTrack?.album?.images[0]?.url ? (
+        <button
+          onClick={togglePlay}
+          className="relative group w-64 h-64 sm:w-80 sm:h-80 md:w-96 md:h-96 transition-transform hover:scale-105 focus:outline-none"
+        >
           <img
             src={currentTrack.album.images[0].url}
             alt="Album cover"
-            className="w-16 h-16 rounded"
+            className="w-full h-full rounded-lg shadow-xl"
           />
-        )}
-        <div className="flex-1">
-          <h3 className="font-semibold text-black dark:text-white">
-            {currentTrack?.name || 'No track playing'}
-          </h3>
-          <p className="text-gray-600 dark:text-gray-300">
-            {currentTrack?.artists?.[0]?.name || 'Unknown artist'}
-          </p>
-        </div>
-      </div>
+          <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-0 group-hover:bg-opacity-40 transition-all rounded-lg">
+            {isPlaying ? (
+              <svg className="w-16 h-16 text-white opacity-0 group-hover:opacity-100 transition-opacity" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            ) : (
+              <svg className="w-16 h-16 text-white opacity-0 group-hover:opacity-100 transition-opacity" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            )}
+          </div>
+        </button>
+      ) : (
+        <button
+          onClick={togglePlay}
+          className="relative group w-64 h-64 sm:w-80 sm:h-80 md:w-96 md:h-96 transition-transform hover:scale-105 focus:outline-none"
+        >
+          <div className="w-full h-full bg-gray-200 dark:bg-gray-700 rounded-lg flex items-center justify-center group-hover:bg-gray-300 dark:group-hover:bg-gray-600 transition-colors">
+            <p className="text-gray-500 dark:text-gray-400 group-hover:text-gray-600 dark:group-hover:text-gray-300 transition-colors">
+              Click here to begin
+            </p>
+          </div>
+        </button>
+      )}
 
-      <div className="flex items-center justify-center gap-4 mb-4">
+      <div className="flex items-center justify-center gap-4">
         <button
           onClick={previousTrack}
           className="p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 focus:outline-none focus:ring-0"
@@ -248,41 +266,23 @@ export default function SpotifyPlayer() {
           </svg>
         </button>
         <button
-          onClick={togglePlay}
-          className="p-3 rounded-full bg-green-500 hover:bg-green-600 text-white focus:outline-none focus:ring-0"
-        >
-          {isPlaying ? (
-            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="6" y="4" width="4" height="16" />
-              <rect x="14" y="4" width="4" height="16" />
-            </svg>
-          ) : (
-            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <polygon points="5 3 19 12 5 21 5 3" />
-            </svg>
-          )}
-        </button>
-        <button
           onClick={nextTrack}
           className="p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 focus:outline-none focus:ring-0"
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M5 4l10 8-10 8V4zM19 5v14" />
+            <path d="M5 4l10 8-10 8V4zM19 4v16" />
           </svg>
         </button>
       </div>
 
-      <div className="flex items-center gap-2">
-        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M11 5L6 9H2v6h4l5 4V5z" />
-        </svg>
+      <div className="w-full max-w-xs">
         <input
           type="range"
           min="0"
           max="100"
           value={volume}
           onChange={(e) => setPlayerVolume(Number(e.target.value))}
-          className="flex-1 focus:outline-none focus:ring-0"
+          className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
         />
       </div>
     </div>
