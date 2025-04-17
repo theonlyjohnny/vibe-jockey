@@ -1,6 +1,5 @@
 import Link from 'next/link';
 import SpotifyLoginButton from './components/SpotifyLoginButton';
-import SpotifyPlayer from './components/SpotifyPlayer';
 import { createClient } from './utils/supabase/server';
 
 export default async function Home() {
@@ -9,18 +8,6 @@ export default async function Home() {
   try {
     const { data: { session } } = await supabase.auth.getSession();
     const user = session?.user;
-    
-    // Debug logging
-    console.log('Session:', JSON.stringify(session, null, 2));
-    console.log('User:', JSON.stringify(user, null, 2));
-    
-    // Try different token locations
-    const accessToken = user?.app_metadata?.provider_token || 
-                       session?.provider_token ||
-                       session?.access_token ||
-                       (user?.identities?.[0] as any)?.access_token;
-    
-    console.log('Access Token:', accessToken ? 'Found token' : 'No token found');
 
     return (
       <main className="flex min-h-screen flex-col items-center justify-center p-4 gap-4">
@@ -30,32 +17,29 @@ export default async function Home() {
 
         <div className="flex flex-col items-center gap-4 w-full max-w-md">
           {user ? (
-            <>
-              <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md w-full flex flex-col gap-4">
-                <h2 className="text-xl font-semibold text-black dark:text-white">Welcome, {user.user_metadata.name || user.email}</h2>
-                <p className="text-black dark:text-white">You are logged in via Spotify</p>
-                {user.user_metadata.avatar_url && (
-                  <img
-                    src={user.user_metadata.avatar_url}
-                    alt="User avatar"
-                    className="w-20 h-20 rounded-full mx-auto"
-                  />
-                )}
-                <Link
-                  href="/dashboard"
-                  className="w-full bg-green-500 text-white p-2 rounded-lg text-center hover:bg-green-600 transition"
-                >
-                  Go to Dashboard
-                </Link>
-                <Link
-                  href="/auth/logout"
-                  className="w-full bg-red-500 text-white p-2 rounded-lg text-center hover:bg-red-600 transition"
-                >
-                  Logout
-                </Link>
-              </div>
-              <SpotifyPlayer accessToken={accessToken} />
-            </>
+            <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md w-full flex flex-col gap-4">
+              <h2 className="text-xl font-semibold text-black dark:text-white">Welcome, {user.user_metadata.name || user.email}</h2>
+              <p className="text-black dark:text-white">You are logged in via Spotify</p>
+              {user.user_metadata.avatar_url && (
+                <img
+                  src={user.user_metadata.avatar_url}
+                  alt="User avatar"
+                  className="w-20 h-20 rounded-full mx-auto"
+                />
+              )}
+              <Link
+                href="/dashboard"
+                className="w-full bg-green-500 text-white p-2 rounded-lg text-center hover:bg-green-600 transition"
+              >
+                Go to Dashboard
+              </Link>
+              <Link
+                href="/auth/logout"
+                className="w-full bg-red-500 text-white p-2 rounded-lg text-center hover:bg-red-600 transition"
+              >
+                Logout
+              </Link>
+            </div>
           ) : (
             <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md w-full flex flex-col gap-4">
               <h2 className="text-xl font-semibold text-black dark:text-white">Login to Vibe Jockey</h2>
