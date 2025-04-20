@@ -8,6 +8,8 @@ export async function GET(request: NextRequest) {
   // if "next" is in param, use it as the redirect URL
   const next = searchParams.get('next') ?? '/';
 
+  console.log(`Processing Spotify auth callback with code: ${code ? 'present' : 'missing'}`);
+
   // Create a response early so we can set cookies on it
   const response = NextResponse.redirect(new URL(next, origin));
   
@@ -46,6 +48,32 @@ export async function GET(request: NextRequest) {
       // Redirect to an error page
       return NextResponse.redirect(new URL('/auth-error', origin));
     }
+    
+    console.log("Session exchange successful, retrieving session to verify token");
+    
+    // Verify provider token is present
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+      console.error("Session is missing after authentication");
+      return NextResponse.redirect(new URL('/auth-error?reason=missing_session', origin));
+    }
+    
+    if (!session.provider_token) {
+      console.error("Provider token missing after authentication");
+      // Try to extract debug information about the session
+      console.log("Session debug info:", {
+        hasUser: !!session.user,
+        hasAccess: !!session.access_token,
+        hasRefresh: !!session.refresh_token,
+        provider: session.user?.app_metadata?.provider,
+        scopes: session.user?.app_metadata?.scopes
+      });
+      
+      // Redirect to an error page that specifically mentions token issues
+      return NextResponse.redirect(new URL('/auth-error?reason=missing_token', origin));
+    }
+    
+    console.log("Authentication successful with provider token");
   }
 
   return response;

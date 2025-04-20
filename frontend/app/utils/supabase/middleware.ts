@@ -1,4 +1,4 @@
-import { createServerClient } from '@supabase/ssr'
+import { createServerClient, type CookieOptions } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
 export async function updateSession(request: NextRequest) {
@@ -16,7 +16,7 @@ export async function updateSession(request: NextRequest) {
         get(name: string) {
           return request.cookies.get(name)?.value
         },
-        set(name: string, value: string, options: any) {
+        set(name: string, value: string, options: CookieOptions) {
           // Set the cookie on the request so that subsequent middleware
           // can access the modified value
           request.cookies.set({
@@ -32,7 +32,7 @@ export async function updateSession(request: NextRequest) {
             ...options,
           })
         },
-        remove(name: string, options: any) {
+        remove(name: string, options: CookieOptions) {
           // Set the expired cookie on the request so that subsequent middleware
           // can access the modified value
           request.cookies.set({

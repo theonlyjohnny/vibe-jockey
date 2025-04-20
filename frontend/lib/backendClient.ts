@@ -38,6 +38,12 @@ class BackendClient {
   }
 
   /**
+   * ================================
+   *      ENDPOINT FUNCTIONS
+   * ================================
+   */
+
+  /**
    * Process a single track
    */
   async processTrack(trackRequest: TrackRequest): Promise<{ status: string; message: string; id: string }> {

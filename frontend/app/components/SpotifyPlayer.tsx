@@ -2,12 +2,41 @@
 
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { createClient } from '../utils/supabase/client';
+import Link from 'next/link';
+import AuthButton from './AuthButton';
 
 declare global {
   interface Window {
     Spotify: any;
     onSpotifyWebPlaybackSDKReady: () => void;
   }
+}
+
+// Add a new utility function to check and refresh token if needed
+async function getValidToken() {
+  const supabase = createClient();
+  const { data: { session } } = await supabase.auth.getSession();
+  
+  console.log('Client-side session check:', {
+    hasUser: !!session?.user,
+    hasToken: !!session?.provider_token
+  });
+  
+  if (!session?.provider_token) {
+    // Try to refresh the session to get a fresh token
+    console.log('Token missing, attempting refresh');
+    const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
+    
+    if (refreshError || !refreshData.session?.provider_token) {
+      console.error("Failed to refresh token:", refreshError);
+      return null;
+    }
+    
+    console.log('Token refresh successful');
+    return refreshData.session.provider_token;
+  }
+  
+  return session.provider_token;
 }
 
 async function transferPlayback(deviceId: string, accessToken: string) {
@@ -90,10 +119,9 @@ export default function SpotifyPlayer() {
   const togglePlay = useCallback(async () => {
     if (!player || !deviceId) return;
     
-    const supabase = createClient();
-    const { data: { session } } = await supabase.auth.getSession();
+    const token = await getValidToken();
     
-    if (!session?.provider_token) {
+    if (!token) {
       setError('No Spotify access token found. Please sign in with Spotify.');
       return;
     }
@@ -101,13 +129,13 @@ export default function SpotifyPlayer() {
     try {
       const response = await fetch('https://api.spotify.com/v1/me/player', {
         headers: {
-          'Authorization': `Bearer ${session.provider_token}`
+          'Authorization': `Bearer ${token}`
         }
       });
 
       if (response.status === 204 || 
           (response.ok && (await response.json()).device?.id !== deviceId)) {
-        await transferPlayback(deviceId, session.provider_token);
+        await transferPlayback(deviceId, token);
       }
       
       await player.togglePlay();
@@ -139,10 +167,9 @@ export default function SpotifyPlayer() {
   useEffect(() => {
     const initializePlayer = async () => {
       try {
-        const supabase = createClient();
-        const { data: { session } } = await supabase.auth.getSession();
+        const token = await getValidToken();
         
-        if (!session?.provider_token) {
+        if (!token) {
           setError('No Spotify access token found. Please sign in with Spotify.');
           setIsLoading(false);
           return;
@@ -165,9 +192,11 @@ export default function SpotifyPlayer() {
         const player = new window.Spotify.Player({
           name: 'Vibe Jockey Player',
           getOAuthToken: async (cb: (token: string) => void) => {
-            const { data: { session } } = await supabase.auth.getSession();
-            if (session?.provider_token) {
-              cb(session.provider_token);
+            const validToken = await getValidToken();
+            if (validToken) {
+              cb(validToken);
+            } else {
+              setError('Spotify session expired. Please sign in again.');
             }
           },
           volume: 0.5
@@ -196,8 +225,8 @@ export default function SpotifyPlayer() {
 
         player.addListener('authentication_error', async ({ message }: { message: string }) => {
           console.error('Failed to authenticate', message);
-          const { data: { session } } = await supabase.auth.getSession();
-          if (!session?.provider_token) {
+          const token = await getValidToken();
+          if (!token) {
             setError('Failed to authenticate with Spotify. Please sign in again.');
             setIsLoading(false);
           }
@@ -238,13 +267,12 @@ export default function SpotifyPlayer() {
           }
           
           // Fetch additional tracks from queue API for a fuller display
-          const supabase = createClient();
-          const { data: { session } } = await supabase.auth.getSession();
-          if (session?.provider_token) {
+          const token = await getValidToken();
+          if (token) {
             try {
               const response = await fetch('https://api.spotify.com/v1/me/player/queue', {
                 headers: {
-                  'Authorization': `Bearer ${session.provider_token}`
+                  'Authorization': `Bearer ${token}`
                 }
               });
               
@@ -272,11 +300,11 @@ export default function SpotifyPlayer() {
         await player.connect();
         setPlayer(player);
 
-        if (session?.provider_token) {
+        if (token) {
           try {
             const response = await fetch('https://api.spotify.com/v1/me/player/queue', {
               headers: {
-                'Authorization': `Bearer ${session.provider_token}`
+                'Authorization': `Bearer ${token}`
               }
             });
             
@@ -336,13 +364,12 @@ export default function SpotifyPlayer() {
     await player.nextTrack();
     
     // Fetch the latest track in the queue to update the display
-    const supabase = createClient();
-    const { data: { session } } = await supabase.auth.getSession();
-    if (session?.provider_token) {
+    const token = await getValidToken();
+    if (token) {
       try {
         const response = await fetch('https://api.spotify.com/v1/me/player/queue', {
           headers: {
-            'Authorization': `Bearer ${session.provider_token}`
+            'Authorization': `Bearer ${token}`
           }
         });
         
@@ -397,15 +424,14 @@ export default function SpotifyPlayer() {
 
   // Generate randomized alternate flows from the current queue
   const updateAlternateFlows = async () => {
-    const supabase = createClient();
-    const { data: { session } } = await supabase.auth.getSession();
+    const token = await getValidToken();
     
-    if (!session?.provider_token) return;
+    if (!token) return;
 
     try {
       const response = await fetch('https://api.spotify.com/v1/me/player/queue', {
         headers: {
-          'Authorization': `Bearer ${session.provider_token}`
+          'Authorization': `Bearer ${token}`
         }
       });
       
@@ -469,14 +495,13 @@ export default function SpotifyPlayer() {
 
     // If we have queue data, update the Spotify queue
     if (newQueue) {
-      const supabase = createClient();
-      const { data: { session } } = await supabase.auth.getSession();
+      const token = await getValidToken();
       
-      if (session?.provider_token) {
+      if (token) {
         try {
           const stateResponse = await fetch('https://api.spotify.com/v1/me/player', {
             headers: {
-              'Authorization': `Bearer ${session.provider_token}`
+              'Authorization': `Bearer ${token}`
             }
           });
 
@@ -495,7 +520,7 @@ export default function SpotifyPlayer() {
               await fetch('https://api.spotify.com/v1/me/player/play', {
                 method: 'PUT',
                 headers: {
-                  'Authorization': `Bearer ${session.provider_token}`,
+                  'Authorization': `Bearer ${token}`,
                   'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
@@ -510,7 +535,7 @@ export default function SpotifyPlayer() {
                   await fetch('https://api.spotify.com/v1/me/player/queue?uri=' + encodeURIComponent(track.uri), {
                     method: 'POST',
                     headers: {
-                      'Authorization': `Bearer ${session.provider_token}`
+                      'Authorization': `Bearer ${token}`
                     }
                   });
                   await new Promise(resolve => setTimeout(resolve, 100));
@@ -593,8 +618,11 @@ export default function SpotifyPlayer() {
 
   if (error) {
     return (
-      <div className="flex items-center justify-center w-full h-full">
-        <p className="text-center text-red-500">{error}</p>
+      <div className="flex flex-col items-center justify-center w-full h-full">
+        <p className="text-center text-red-500 mb-4">{error}</p>
+        {error.includes('No Spotify access token') && (
+          <AuthButton type="login" />
+        )}
       </div>
     );
   }
