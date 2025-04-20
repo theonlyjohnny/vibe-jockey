@@ -72,26 +72,19 @@ interface SpotifyTrack {
 }
 
 interface QueueState {
-  prevTrack2: SpotifyTrack | null;
-  prevTrack: SpotifyTrack | null;
+  previousTracks: SpotifyTrack[];
   currentTrack: SpotifyTrack | null;
-  nextTrackInQueue: SpotifyTrack | null;
-  nextTrackInQueue2: SpotifyTrack | null;
-  nextTrackInQueue3: SpotifyTrack | null;
-  nextTrackInQueue4: SpotifyTrack | null;
+  nextTracks: SpotifyTrack[];
 }
-
 
 export default function SpotifyPlayer() {
   const [player, setPlayer] = useState<any>(null);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [currentTrack, setCurrentTrack] = useState<any>(null);
-  const [prevTrack, setPrevTrack] = useState<any>(null);
-  const [prevTrack2, setPrevTrack2] = useState<any>(null);
-  const [nextTrackInQueue, setNextTrackInQueue] = useState<any>(null);
-  const [nextTrackInQueue2, setNextTrackInQueue2] = useState<any>(null);
-  const [nextTrackInQueue3, setNextTrackInQueue3] = useState<any>(null);
-  const [nextTrackInQueue4, setNextTrackInQueue4] = useState<any>(null);
+  const [queueState, setQueueState] = useState<QueueState>({
+    previousTracks: [],
+    currentTrack: null,
+    nextTracks: []
+  });
   const [isAnimating, setIsAnimating] = useState(false);
   const [animationDirection, setAnimationDirection] = useState<'left' | 'right' | 'up' | 'down' | null>(null);
   const [volume, setVolume] = useState(50);
@@ -102,8 +95,10 @@ export default function SpotifyPlayer() {
   const playerRef = useRef<any>(null);
   const scriptRef = useRef<HTMLScriptElement | null>(null);
   const [showAlternateFlows, setShowAlternateFlows] = useState(false);
-  const [alternateFlow1, setAlternateFlow1] = useState<QueueState | null>(null);
-  const [alternateFlow3, setAlternateFlow3] = useState<QueueState | null>(null);
+  const [alternateFlows, setAlternateFlows] = useState<{[key: string]: QueueState}>({
+    flow1: { previousTracks: [], currentTrack: null, nextTracks: [] },
+    flow3: { previousTracks: [], currentTrack: null, nextTracks: [] }
+  });
 
   // Utility function to randomly shuffle an array using Fisher-Yates algorithm
   const shuffleArray = <T,>(array: T[]): T[] => {
@@ -248,23 +243,12 @@ export default function SpotifyPlayer() {
             next: state.track_window.next_tracks
           });
           
-          // Update current and previous tracks from the player state
-          setCurrentTrack(state.track_window.current_track);
-          
-          if (state.track_window.previous_tracks.length > 0) {
-            setPrevTrack(state.track_window.previous_tracks[0]);
-          }
-          if (state.track_window.previous_tracks.length > 1) {
-            setPrevTrack2(state.track_window.previous_tracks[1]);
-          }
-          
-          // Update next tracks from player state
-          if (state.track_window.next_tracks.length > 0) {
-            setNextTrackInQueue(state.track_window.next_tracks[0]);
-          }
-          if (state.track_window.next_tracks.length > 1) {
-            setNextTrackInQueue2(state.track_window.next_tracks[1]);
-          }
+          // Update the queue state with current, previous, and next tracks
+          setQueueState(prevState => ({
+            previousTracks: [...state.track_window.previous_tracks].reverse(),
+            currentTrack: state.track_window.current_track,
+            nextTracks: [...state.track_window.next_tracks]
+          }));
           
           // Fetch additional tracks from queue API for a fuller display
           const token = await getValidToken();
@@ -277,13 +261,17 @@ export default function SpotifyPlayer() {
               });
               
               if (response.ok) {
-                const queue = await response.json();
-                if (queue.queue) {
-                  if (queue.queue.length > 2) {
-                    setNextTrackInQueue3(queue.queue[2]);
-                  }
-                  if (queue.queue.length > 3) {
-                    setNextTrackInQueue4(queue.queue[3]);
+                const queueData = await response.json();
+                if (queueData.queue && queueData.queue.length > 0) {
+                  // Get any tracks from the API that aren't already in our next tracks
+                  // This assumes the first 2 tracks in queueData match what's in state.track_window.next_tracks
+                  const additionalTracks = queueData.queue.slice(state.track_window.next_tracks.length);
+                  
+                  if (additionalTracks.length > 0) {
+                    setQueueState(prevState => ({
+                      ...prevState,
+                      nextTracks: [...prevState.nextTracks, ...additionalTracks]
+                    }));
                   }
                 }
               }
@@ -309,17 +297,13 @@ export default function SpotifyPlayer() {
             });
             
             if (response.ok) {
-              const queue = await response.json();
-              if (queue.queue) {
-                if (queue.queue.length > 1) {
-                  setNextTrackInQueue2(queue.queue[1]);
-                }
-                if (queue.queue.length > 2) {
-                  setNextTrackInQueue3(queue.queue[2]);
-                }
-                if (queue.queue.length > 3) {
-                  setNextTrackInQueue4(queue.queue[3]);
-                }
+              const queueData = await response.json();
+              if (queueData.queue && queueData.queue.length > 0) {
+                // We'll update this once we get the player state with the current track
+                setQueueState(prevState => ({
+                  ...prevState,
+                  nextTracks: [...queueData.queue]
+                }));
               }
             }
           } catch (error) {
@@ -352,14 +336,16 @@ export default function SpotifyPlayer() {
     setIsAnimating(true);
     setAnimationDirection('left');
     
-    // Update track states before skipping
-    setPrevTrack2(prevTrack);
-    setPrevTrack(currentTrack);
-    setCurrentTrack(nextTrackInQueue);
-    setNextTrackInQueue(nextTrackInQueue2);
-    setNextTrackInQueue2(nextTrackInQueue3);
-    setNextTrackInQueue3(nextTrackInQueue4);
-    setNextTrackInQueue4(null);
+    // Update queue state before skipping
+    setQueueState(prevState => {
+      if (!prevState.currentTrack || prevState.nextTracks.length === 0) return prevState;
+      
+      return {
+        previousTracks: [prevState.currentTrack, ...prevState.previousTracks].slice(0, 5),
+        currentTrack: prevState.nextTracks[0],
+        nextTracks: prevState.nextTracks.slice(1)
+      };
+    });
     
     await player.nextTrack();
     
@@ -374,9 +360,19 @@ export default function SpotifyPlayer() {
         });
         
         if (response.ok) {
-          const queue = await response.json();
-          if (queue.queue && queue.queue.length > 3) {
-            setNextTrackInQueue4(queue.queue[3]);
+          const queueData = await response.json();
+          if (queueData.queue && queueData.queue.length > 0) {
+            setQueueState(prevState => {
+              // Calculate how many tracks we need to add
+              // This assumes queueData.queue includes all tracks including those we already have
+              const existingNextTracksCount = prevState.nextTracks.length;
+              const additionalTracks = queueData.queue.slice(existingNextTracksCount);
+              
+              return {
+                ...prevState,
+                nextTracks: [...prevState.nextTracks, ...additionalTracks]
+              };
+            });
           }
         }
       } catch (error) {
@@ -392,18 +388,23 @@ export default function SpotifyPlayer() {
 
   // Go back to the previous track and update the queue display
   const previousTrack = async () => {
-    if (!player || isAnimating) return;
+    if (!player || isAnimating || !queueState.previousTracks.length) return;
     setIsAnimating(true);
     setAnimationDirection('right');
     
-    // Update track states before going back
-    setNextTrackInQueue2(nextTrackInQueue);
-    setNextTrackInQueue(currentTrack);
-    setCurrentTrack(prevTrack);
-    setPrevTrack(prevTrack2);
-    setPrevTrack2(null);
+    // Update queue state before going back
+    setQueueState(prevState => {
+      if (!prevState.currentTrack || prevState.previousTracks.length === 0) return prevState;
+      
+      return {
+        previousTracks: prevState.previousTracks.slice(1),
+        currentTrack: prevState.previousTracks[0],
+        nextTracks: [prevState.currentTrack, ...prevState.nextTracks].slice(0, 5)
+      };
+    });
     
     await player.previousTrack();
+    
     setTimeout(() => {
       setIsAnimating(false);
       setAnimationDirection(null);
@@ -436,33 +437,25 @@ export default function SpotifyPlayer() {
       });
       
       if (response.ok) {
-        const queue = await response.json();
-        if (queue.queue && queue.queue.length > 0) {
+        const queueData = await response.json();
+        if (queueData.queue && queueData.queue.length > 0) {
           // Get future tracks and create two different shuffled versions
-          const futureTracks = queue.queue.slice(2) as SpotifyTrack[];
+          const futureTracks = queueData.queue.slice(2) as SpotifyTrack[];
           const shuffled1 = shuffleArray(futureTracks);
           const shuffled3 = shuffleArray(futureTracks);
 
-          // Set up alternate flow 1
-          setAlternateFlow1({
-            prevTrack2: null,
-            prevTrack: null,
-            currentTrack: shuffled1[0] || null,
-            nextTrackInQueue: shuffled1[1] || null,
-            nextTrackInQueue2: shuffled1[2] || null,
-            nextTrackInQueue3: shuffled1[3] || null,
-            nextTrackInQueue4: shuffled1[4] || null
-          });
-
-          // Set up alternate flow 3
-          setAlternateFlow3({
-            prevTrack2: null,
-            prevTrack: null,
-            currentTrack: shuffled3[0] || null,
-            nextTrackInQueue: shuffled3[1] || null,
-            nextTrackInQueue2: shuffled3[2] || null,
-            nextTrackInQueue3: shuffled3[3] || null,
-            nextTrackInQueue4: shuffled3[4] || null
+          // Set up alternate flows
+          setAlternateFlows({
+            flow1: {
+              previousTracks: [],
+              currentTrack: shuffled1[0] || null,
+              nextTracks: shuffled1.slice(1, 5)
+            },
+            flow3: {
+              previousTracks: [],
+              currentTrack: shuffled3[0] || null,
+              nextTracks: shuffled3.slice(1, 5)
+            }
           });
         }
       }
@@ -487,14 +480,12 @@ export default function SpotifyPlayer() {
     
     // Get the queue data for the selected flow
     let newQueue: QueueState | null = null;
-    if (flow === 'flow1' && alternateFlow1) {
-      newQueue = alternateFlow1;
-    } else if (flow === 'flow3' && alternateFlow3) {
-      newQueue = alternateFlow3;
+    if ((flow === 'flow1' || flow === 'flow3') && alternateFlows[flow]) {
+      newQueue = alternateFlows[flow];
     }
 
     // If we have queue data, update the Spotify queue
-    if (newQueue) {
+    if (newQueue && newQueue.currentTrack) {
       const token = await getValidToken();
       
       if (token) {
@@ -509,10 +500,7 @@ export default function SpotifyPlayer() {
             // Get the tracks to add from the selected flow
             const tracksToAdd = [
               newQueue.currentTrack,
-              newQueue.nextTrackInQueue,
-              newQueue.nextTrackInQueue2,
-              newQueue.nextTrackInQueue3,
-              newQueue.nextTrackInQueue4
+              ...newQueue.nextTracks
             ].filter(track => track?.uri);
 
             if (tracksToAdd.length > 0 && tracksToAdd[0]?.uri) {
@@ -544,13 +532,12 @@ export default function SpotifyPlayer() {
               
               // Update local state with the new track order
               setTimeout(() => {
-                setPrevTrack2(null);
-                setPrevTrack(null);
-                setCurrentTrack(tracksToAdd[0]);
-                setNextTrackInQueue(tracksToAdd[1] || null);
-                setNextTrackInQueue2(tracksToAdd[2] || null);
-                setNextTrackInQueue3(tracksToAdd[3] || null);
-                setNextTrackInQueue4(tracksToAdd[4] || null);
+                setQueueState({
+                  previousTracks: [],
+                  currentTrack: tracksToAdd[0],
+                  nextTracks: tracksToAdd.slice(1)
+                });
+                
                 setCurrentFlow(flow);
                 
                 // After switching to flow 1 or 3, reset both alternate flows
@@ -572,27 +559,9 @@ export default function SpotifyPlayer() {
         }
       }
     } else {
-      // For Flow 2 or if alternate flows aren't ready, keep current queue
+      // For Flow 2 or if alternate flows aren't ready, keep current queue but update the flow
       setTimeout(() => {
-        const currentQueue = {
-          prevTrack2,
-          prevTrack,
-          currentTrack,
-          nextTrackInQueue,
-          nextTrackInQueue2,
-          nextTrackInQueue3,
-          nextTrackInQueue4
-        };
-
-        setPrevTrack2(currentQueue.prevTrack2);
-        setPrevTrack(currentQueue.prevTrack);
-        setCurrentTrack(currentQueue.currentTrack);
-        setNextTrackInQueue(currentQueue.nextTrackInQueue);
-        setNextTrackInQueue2(currentQueue.nextTrackInQueue2);
-        setNextTrackInQueue3(currentQueue.nextTrackInQueue3);
-        setNextTrackInQueue4(currentQueue.nextTrackInQueue4);
         setCurrentFlow(flow);
-        
         setTimeout(() => {
           setIsAnimating(false);
           setAnimationDirection(null);
@@ -634,37 +603,30 @@ export default function SpotifyPlayer() {
           <div className="flex items-center justify-center">
             <div className="flex flex-col items-center gap-6">
               <div className="flex items-center gap-3">
-                {prevTrack2?.album?.images[0]?.url && (
-                  <div className="relative w-32 h-32 sm:w-40 sm:h-40 md:w-48 md:h-48 lg:w-56 lg:h-56 flex-shrink-0">
-                    <img
-                      src={prevTrack2.album.images[0].url}
-                      alt="Previous track 2"
-                      className="w-full h-full rounded-lg object-cover"
-                    />
-                    <div className="absolute inset-0 bg-gradient-to-r from-transparent to-black/50 rounded-lg"></div>
-                  </div>
-                )}
+                {/* Previous Tracks (up to 2) */}
+                {queueState.previousTracks.slice(0, 2).map((track, index) => (
+                  track?.album?.images[0]?.url && (
+                    <div key={`prev-${index}`} className="relative w-32 h-32 sm:w-40 sm:h-40 md:w-48 md:h-48 lg:w-56 lg:h-56 flex-shrink-0">
+                      <img
+                        src={track.album.images[0].url}
+                        alt={`Previous track ${index + 1}`}
+                        className="w-full h-full rounded-lg object-cover"
+                      />
+                      <div className="absolute inset-0 bg-gradient-to-r from-transparent to-black/50 rounded-lg"></div>
+                    </div>
+                  )
+                ))}
 
-                {prevTrack?.album?.images[0]?.url && (
-                  <div className="relative w-32 h-32 sm:w-40 sm:h-40 md:w-48 md:h-48 lg:w-56 lg:h-56 flex-shrink-0">
-                    <img
-                      src={prevTrack.album.images[0].url}
-                      alt="Previous track"
-                      className="w-full h-full rounded-lg object-cover"
-                    />
-                    <div className="absolute inset-0 bg-gradient-to-r from-transparent to-black/50 rounded-lg"></div>
-                  </div>
-                )}
-
+                {/* Current Track */}
                 <button
                   onClick={togglePlay}
                   className="relative group w-32 h-32 sm:w-40 sm:h-40 md:w-48 md:h-48 lg:w-56 lg:h-56 flex-shrink-0 hover:scale-105 focus:outline-none transition-transform duration-300"
                 >
-                  {currentTrack?.album?.images[0]?.url ? (
+                  {queueState.currentTrack?.album?.images[0]?.url ? (
                     <>
                       <img
-                        src={currentTrack.album.images[0].url}
-                        alt={currentTrack.name || 'Album cover'}
+                        src={queueState.currentTrack.album.images[0].url}
+                        alt={queueState.currentTrack.name || 'Album cover'}
                         className="w-full h-full rounded-lg shadow-xl object-cover"
                       />
                       <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-0 group-hover:bg-opacity-40 transition-all duration-300 ease-in-out rounded-lg">
@@ -690,6 +652,7 @@ export default function SpotifyPlayer() {
                 </button>
 
                 <div className="flex flex-col gap-6">
+                  {/* Alternate Flow 1 */}
                   <div className={`transition-all duration-500 ease-in-out ${
                     showAlternateFlows ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-full'
                   }`}>
@@ -704,12 +667,9 @@ export default function SpotifyPlayer() {
                       >
                         Flow 1
                       </button>
-                      {alternateFlow1 && [
-                        alternateFlow1.currentTrack,
-                        alternateFlow1.nextTrackInQueue,
-                        alternateFlow1.nextTrackInQueue2,
-                        alternateFlow1.nextTrackInQueue3,
-                        alternateFlow1.nextTrackInQueue4
+                      {alternateFlows.flow1 && [
+                        alternateFlows.flow1.currentTrack,
+                        ...alternateFlows.flow1.nextTracks
                       ].filter(track => track?.album?.images[0]?.url)
                        .map((track, index) => (
                         <div key={`flow1-${index}`} className="relative w-32 h-32 sm:w-40 sm:h-40 md:w-48 md:h-48 lg:w-56 lg:h-56 flex-shrink-0 opacity-75">
@@ -724,8 +684,9 @@ export default function SpotifyPlayer() {
                     </div>
                   </div>
 
+                  {/* Next Tracks (up to 4) */}
                   <div className="flex items-center gap-3">
-                    {[nextTrackInQueue, nextTrackInQueue2, nextTrackInQueue3, nextTrackInQueue4].map((track, index) => (
+                    {queueState.nextTracks.slice(0, 4).map((track, index) => (
                       track?.album?.images[0]?.url && (
                         <div key={`next-${index}`} className="relative w-32 h-32 sm:w-40 sm:h-40 md:w-48 md:h-48 lg:w-56 lg:h-56 flex-shrink-0">
                           <img
@@ -739,6 +700,7 @@ export default function SpotifyPlayer() {
                     ))}
                   </div>
 
+                  {/* Alternate Flow 3 */}
                   <div className={`transition-all duration-500 ease-in-out ${
                     showAlternateFlows ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-full'
                   }`}>
@@ -753,12 +715,9 @@ export default function SpotifyPlayer() {
                       >
                         Flow 3
                       </button>
-                      {alternateFlow3 && [
-                        alternateFlow3.currentTrack,
-                        alternateFlow3.nextTrackInQueue,
-                        alternateFlow3.nextTrackInQueue2,
-                        alternateFlow3.nextTrackInQueue3,
-                        alternateFlow3.nextTrackInQueue4
+                      {alternateFlows.flow3 && [
+                        alternateFlows.flow3.currentTrack,
+                        ...alternateFlows.flow3.nextTracks
                       ].filter(track => track?.album?.images[0]?.url)
                        .map((track, index) => (
                         <div key={`flow3-${index}`} className="relative w-32 h-32 sm:w-40 sm:h-40 md:w-48 md:h-48 lg:w-56 lg:h-56 flex-shrink-0 opacity-75">
@@ -807,10 +766,10 @@ export default function SpotifyPlayer() {
             </button>
           </div>
 
-          {currentTrack && (
+          {queueState.currentTrack && (
             <div className="text-sm">
-              <p className="font-medium text-gray-800 dark:text-gray-200">{currentTrack.name}</p>
-              <p className="text-gray-600 dark:text-gray-400">{currentTrack.artists?.map((artist: SpotifyArtist) => artist.name).join(', ')}</p>
+              <p className="font-medium text-gray-800 dark:text-gray-200">{queueState.currentTrack.name}</p>
+              <p className="text-gray-600 dark:text-gray-400">{queueState.currentTrack.artists?.map((artist: SpotifyArtist) => artist.name).join(', ')}</p>
             </div>
           )}
         </div>

@@ -13,37 +13,27 @@ export async function updateSession(request: NextRequest) {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookies: {
-        get(name: string) {
-          return request.cookies.get(name)?.value
+        getAll() {
+          return request.cookies.getAll()
         },
-        set(name: string, value: string, options: CookieOptions) {
-          // Set the cookie on the request so that subsequent middleware
-          // can access the modified value
-          request.cookies.set({
-            name,
-            value,
-            ...options,
+        setAll(cookiesToSet) {
+          cookiesToSet.forEach(({ name, value, options }) => {
+            // Set the cookie on the request so that subsequent middleware
+            // can access the modified value
+            request.cookies.set({
+              name,
+              value,
+              ...options,
+            })
+            
+            // Set the cookie on the response so that it's sent back to the browser
+            response.cookies.set({
+              name,
+              value,
+              ...options,
+            })
           })
-          
-          // Set the cookie on the response so that it's sent back to the browser
-          response.cookies.set({
-            name,
-            value,
-            ...options,
-          })
-        },
-        remove(name: string, options: CookieOptions) {
-          // Set the expired cookie on the request so that subsequent middleware
-          // can access the modified value
-          request.cookies.set({
-            name,
-            value: '',
-            ...options,
-          })
-          
-          // Set the expired cookie on the response so that it's sent back to the browser
-          response.cookies.delete(name)
-        },
+        }
       },
     }
   )
