@@ -10,6 +10,7 @@ import io
 from pydub import AudioSegment
 from dotenv import load_dotenv
 from typing import List, Dict, Any, Optional
+from supabase import create_client, Client
 
 # Import from parent directory module
 import sys
@@ -30,6 +31,10 @@ class AudioProcessingError(Exception):
 
 class PreviewDownloadError(Exception):
     """Raised when preview download fails."""
+    pass
+
+class SpotifyAPIError(Exception):
+    """Raised when Spotify API calls fail."""
     pass
 
 # Load environment variables
@@ -140,19 +145,27 @@ def process_track_with_metadata(id: str, audio_url: str, metadata: Dict[str, Any
         logger.error(f"Error processing track: {str(e)}")
         raise
 
-def process_user_tracks(user_id: str) -> Dict[str, Any]:
-    """Process all unembedded tracks for a specific user.
-    
-    Args:
-        user_id (str): The user ID to process tracks for
-        
-    Returns:
-        Dict[str, Any]: Status information about the processing
-    """
+def get_spotify_token(user_id: str, supabase: Client) -> str:
+    """Get Spotify access token for a user from Supabase auth.session."""
     try:
-        logger.info(f"Processing unembedded tracks for user: {user_id}")
+        response = supabase.auth.admin.get_user_by_id(user_id)
+        if not response or not response.user:
+            raise SpotifyAPIError(f"User {user_id} not found")
+            
+        provider_token = response.user.app_metadata.get('provider_token')
+        if not provider_token:
+            raise SpotifyAPIError("No Spotify access token found")
+            
+        return provider_token
+    except Exception as e:
+        raise SpotifyAPIError(f"Failed to get Spotify token: {str(e)}")
+
+def process_user_tracks(user_id: str, spotify_token: str) -> Dict[str, Any]:
+    """Process all unembedded tracks for a specific user."""
+    try:
+        logger.info(f"Processing tracks for user: {user_id}")
         
-        # Initialize Supabase client to query directly
+        # Initialize Supabase client
         supabase_url = os.getenv("SUPABASE_URL")
         supabase_key = os.getenv("SUPABASE_KEY")
         
@@ -160,16 +173,102 @@ def process_user_tracks(user_id: str) -> Dict[str, Any]:
             raise ValueError("SUPABASE_URL and SUPABASE_KEY must be set in environment variables")
             
         vector_store = SupabaseVectorStore()
-        client = vector_store.client
         
-        # Query for tracks without embeddings for the specified user
-        response = client.table("song_embeddings").select("*").eq("user_id", user_id).is_("embedding", "null").execute()
+        # 1. Fetch user's liked songs from Spotify
+        logger.info("Starting to fetch liked songs from Spotify API")
+        songs = []
+        total_songs = 0
+        
+        # First get user profile to determine their market
+        verify_response = requests.get("https://api.spotify.com/v1/me", headers={"Authorization": f"Bearer {spotify_token}"})
+        if not verify_response.ok:
+            error_data = verify_response.json() if verify_response.content else "No error details"
+            logger.error(f"Failed to verify Spotify token: Status {verify_response.status_code}, Response: {error_data}")
+            raise SpotifyAPIError(f"Invalid Spotify token: {verify_response.status_code}")
+        
+        user_data = verify_response.json()
+        user_market = user_data.get('country', 'US')  # Default to US if country not found
+        logger.info(f"Successfully verified Spotify token for user: {user_data.get('display_name', 'Unknown')} (Market: {user_market})")
+        
+        # Fetch all liked songs with market parameter
+        url = f"https://api.spotify.com/v1/me/tracks?limit=50&market={user_market}"
+        headers = {"Authorization": f"Bearer {spotify_token}"}
+        
+        # Fetch all liked songs
+        while url:
+            logger.info(f"Fetching songs from: {url}")
+            response = requests.get(url, headers=headers)
+            
+            if not response.ok:
+                error_data = response.json() if response.content else "No error details"
+                logger.error(f"Spotify API error: Status {response.status_code}, Response: {error_data}")
+                raise SpotifyAPIError(f"Spotify API error: {response.status_code}")
+            
+            data = response.json()
+            items = data.get('items', [])
+            logger.info(f"Fetched {len(items)} songs from current page")
+            
+            for item in items:
+                total_songs += 1
+                track = item.get('track', {})
+                if not track:
+                    logger.warning("Found item without track data")
+                    continue
+                
+                # Debug: Print full track data for the first few songs
+                if total_songs <= 3:
+                    logger.info(f"Full track data for song {total_songs}:")
+                    logger.info(json.dumps(track, indent=2))
+                
+                preview_url = track.get('preview_url')
+                track_name = track.get('name', 'Unknown')
+                artist_name = track['artists'][0]['name'] if track.get('artists') else 'Unknown'
+                
+                if not preview_url:
+                    logger.debug(f"No preview URL for track: '{track_name}' by {artist_name}")
+                    continue
+                
+                try:
+                    songs.append({
+                        'id': track['id'],
+                        'title': track_name,
+                        'artist': artist_name,
+                        'preview_url': preview_url
+                    })
+                    logger.info(f"Found preview URL for track: '{track_name}' by {artist_name}")
+                except KeyError as e:
+                    logger.warning(f"Missing required field in track data: {e}")
+                    continue
+            
+            url = data.get('next')
+            if url:
+                logger.info("Found next page, continuing...")
+        
+        logger.info(f"Found {len(songs)} songs with preview URLs out of {total_songs} total liked songs")
+        
+        # 2. Store tracks in Supabase
+        try:
+            for track in songs:
+                vector_store.client.table('song_embeddings').insert({
+                    'id': track['id'],
+                    'user_id': user_id,
+                    'preview_url': track['preview_url'],
+                    'title': track['title'],
+                    'artist': track['artist'],
+                    'embedding': None  # Will be filled in later
+                }).execute()
+            logger.info(f"Stored {len(songs)} tracks for user {user_id}")
+        except Exception as e:
+            raise SupabaseConnectionError(f"Failed to store tracks: {str(e)}")
+        
+        # 3. Process tracks that don't have embeddings
+        response = vector_store.client.table("song_embeddings").select("*").eq("user_id", user_id).is_("embedding", "null").execute()
         
         if hasattr(response, 'error') and response.error:
             raise SupabaseConnectionError(f"Supabase query failed: {json.dumps(response.error)}")
         
         unembedded_tracks = response.data
-        logger.info(f"Found {len(unembedded_tracks)} unembedded tracks for user {user_id}")
+        logger.info(f"Processing {len(unembedded_tracks)} unembedded tracks")
         
         processed_count = 0
         failed_tracks = []
@@ -177,7 +276,6 @@ def process_user_tracks(user_id: str) -> Dict[str, Any]:
         # Process each track
         for track in unembedded_tracks:
             try:
-                # Check if we have all required fields
                 if not track.get("preview_url"):
                     logger.warning(f"Track {track.get('id')} has no preview URL, skipping")
                     failed_tracks.append({

@@ -14,6 +14,7 @@ export type TrackRequest = {
 
 export type ProcessUserTracksRequest = {
   user_id: string;
+  spotify_token?: string;
 };
 
 class BackendClient {
@@ -22,19 +23,25 @@ class BackendClient {
 
   constructor() {
     // Default to localhost:8000 if not specified
-    this.apiUrl = process.env.BACKEND_API_URL || 'http://localhost:8000';
-    this.apiKey = process.env.BACKEND_API_KEY || '';
+    this.apiUrl = process.env.NEXT_PUBLIC_BACKEND_API_URL || 'http://localhost:8000';
+    this.apiKey = process.env.NEXT_PUBLIC_BACKEND_API_KEY || '';
 
     if (!this.apiKey) {
-      console.warn('BACKEND_API_KEY not set in environment variables');
+      console.warn('NEXT_PUBLIC_BACKEND_API_KEY not set in environment variables');
     }
   }
 
-  private getHeaders(): HeadersInit {
-    return {
+  private getHeaders(spotifyToken?: string): HeadersInit {
+    const headers: HeadersInit = {
       'Content-Type': 'application/json',
       'X-API-Key': this.apiKey,
     };
+
+    if (spotifyToken) {
+      headers['X-Spotify-Token'] = spotifyToken;
+    }
+
+    return headers;
   }
 
   /**
@@ -68,17 +75,18 @@ class BackendClient {
   /**
    * Process all unembedded tracks for a user
    */
-  async processUserTracks(userId: string): Promise<{ status: string; message: string; user_id: string }> {
+  async processUserTracks(userId: string, spotifyToken: string): Promise<{ status: string; message: string; user_id: string }> {
     try {
       const request: ProcessUserTracksRequest = { user_id: userId };
       const response = await fetch(`${this.apiUrl}/process-user-tracks`, {
         method: 'POST',
-        headers: this.getHeaders(),
+        headers: this.getHeaders(spotifyToken),
         body: JSON.stringify(request),
       });
 
       if (!response.ok) {
-        throw new Error(`HTTP error ${response.status}: ${await response.text()}`);
+        const errorText = await response.text();
+        throw new Error(`HTTP error ${response.status}: ${errorText}`);
       }
 
       return await response.json();

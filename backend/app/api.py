@@ -1,10 +1,12 @@
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Depends
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, Depends, Header
 import logging
 import os
 from .models import TrackRequest, ProcessUserTracksRequest
 from .processor import process_track_with_metadata, process_user_tracks
 from fastapi.security.api_key import APIKeyHeader
 from fastapi import Security
+from fastapi.middleware.cors import CORSMiddleware
+from typing import Optional
 
 # Set up logging
 logging.basicConfig(
@@ -32,6 +34,15 @@ async def get_api_key(api_key_header: str = Security(api_key_header)):
 
 app = FastAPI(title="Audio Processing API")
 
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],  # Frontend URL
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 @app.post("/process-track")
 async def process_track_endpoint(track_request: TrackRequest, background_tasks: BackgroundTasks, authorized: bool = Depends(get_api_key)):
     try:
@@ -53,12 +64,21 @@ async def process_track_endpoint(track_request: TrackRequest, background_tasks: 
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/process-user-tracks")
-async def process_user_tracks_endpoint(request: ProcessUserTracksRequest, background_tasks: BackgroundTasks, authorized: bool = Depends(get_api_key)):
+async def process_user_tracks_endpoint(
+    request: ProcessUserTracksRequest,
+    background_tasks: BackgroundTasks,
+    x_spotify_token: Optional[str] = Header(None),
+    authorized: bool = Depends(get_api_key)
+):
     try:
+        if not x_spotify_token:
+            raise HTTPException(status_code=400, detail="X-Spotify-Token header is required")
+            
         # Process user tracks in background
         background_tasks.add_task(
             process_user_tracks,
-            request.user_id
+            request.user_id,
+            x_spotify_token
         )
         
         return {
