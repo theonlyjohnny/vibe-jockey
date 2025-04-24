@@ -187,14 +187,14 @@ def process_user_tracks(user_id: str, spotify_token: str) -> Dict[str, Any]:
             raise SpotifyAPIError(f"Invalid Spotify token: {verify_response.status_code}")
         
         user_data = verify_response.json()
-        user_market = user_data.get('country', 'US')  # Default to US if country not found
-        logger.info(f"Successfully verified Spotify token for user: {user_data.get('display_name', 'Unknown')} (Market: {user_market})")
+        user_market = user_data.get('country', 'US')  # Get user's market, fallback to US
+        logger.info(f"Successfully verified Spotify token for user: {user_data.get('display_name', 'Unknown')} in market: {user_market}")
         
-        # Fetch all liked songs with market parameter
-        url = f"https://api.spotify.com/v1/me/tracks?limit=50&market={user_market}"
+        # Fetch first 10 liked songs with additional fields
+        url = f"https://api.spotify.com/v1/me/tracks?limit=10&market={user_market}&additional_types=track"
         headers = {"Authorization": f"Bearer {spotify_token}"}
         
-        # Fetch all liked songs
+        # Fetch liked songs
         while url:
             logger.info(f"Fetching songs from: {url}")
             response = requests.get(url, headers=headers)
@@ -208,6 +208,11 @@ def process_user_tracks(user_id: str, spotify_token: str) -> Dict[str, Any]:
             items = data.get('items', [])
             logger.info(f"Fetched {len(items)} songs from current page")
             
+            # Log the full response structure of the first track for debugging
+            if items:
+                logger.info("First track response structure:")
+                logger.info(json.dumps(items[0], indent=2))
+            
             for item in items:
                 total_songs += 1
                 track = item.get('track', {})
@@ -215,20 +220,34 @@ def process_user_tracks(user_id: str, spotify_token: str) -> Dict[str, Any]:
                     logger.warning("Found item without track data")
                     continue
                 
-                # Debug: Print full track data for the first few songs
-                if total_songs <= 3:
-                    logger.info(f"Full track data for song {total_songs}:")
-                    logger.info(json.dumps(track, indent=2))
-                
-                preview_url = track.get('preview_url')
+                # Log full details for each track
                 track_name = track.get('name', 'Unknown')
                 artist_name = track['artists'][0]['name'] if track.get('artists') else 'Unknown'
+                preview_url = track.get('preview_url')
+                track_id = track.get('id', 'Unknown')
+                
+                logger.info(f"Track {total_songs}:")
+                logger.info(f"  ID: {track_id}")
+                logger.info(f"  Name: {track_name}")
+                logger.info(f"  Artist: {artist_name}")
+                logger.info(f"  Preview URL: {preview_url}")
+                logger.info(f"  Available Markets: {len(track.get('available_markets', []))} markets")
                 
                 if not preview_url:
-                    logger.debug(f"No preview URL for track: '{track_name}' by {artist_name}")
+                    logger.info(f"No preview URL for track: '{track_name}' by {artist_name}")
                     continue
                 
                 try:
+                    # Test audio processing pipeline immediately for the first song with a preview URL
+                    if len(songs) == 0:
+                        logger.info(f"Testing audio processing pipeline with first available preview URL...")
+                        try:
+                            test_embedding = download_and_process_audio(preview_url)
+                            logger.info(f"Successfully generated embedding of shape {test_embedding.shape} for '{track_name}'")
+                        except Exception as e:
+                            logger.error(f"Failed to process audio for '{track_name}': {str(e)}")
+                            raise
+                    
                     songs.append({
                         'id': track['id'],
                         'title': track_name,
@@ -240,9 +259,8 @@ def process_user_tracks(user_id: str, spotify_token: str) -> Dict[str, Any]:
                     logger.warning(f"Missing required field in track data: {e}")
                     continue
             
-            url = data.get('next')
-            if url:
-                logger.info("Found next page, continuing...")
+            # Break after first page since we only want 10 songs
+            break
         
         logger.info(f"Found {len(songs)} songs with preview URLs out of {total_songs} total liked songs")
         

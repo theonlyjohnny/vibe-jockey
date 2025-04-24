@@ -7,6 +7,8 @@ from fastapi.security.api_key import APIKeyHeader
 from fastapi import Security
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional
+import requests
+import json
 
 # Set up logging
 logging.basicConfig(
@@ -89,6 +91,7 @@ async def process_user_tracks_endpoint(
     except Exception as e:
         logger.error(f"Error in process-user-tracks API: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 # Health check endpoint
 @app.get("/health")

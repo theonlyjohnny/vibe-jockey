@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { Trait, QueueSong, SongQueueRequest, SongQueueResponse } from '../types/song-queue';
+import backendClient from '@/lib/backendClient';
 
 export default function SongQueuePage() {
   const [currentSong, setCurrentSong] = useState('song1');
