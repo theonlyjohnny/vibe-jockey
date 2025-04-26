@@ -10,6 +10,7 @@ import io
 from pydub import AudioSegment
 from dotenv import load_dotenv
 from typing import List, Dict, Any, Optional
+import urllib.parse
 
 # Import from parent directory module
 import sys
@@ -30,6 +31,10 @@ class AudioProcessingError(Exception):
 
 class PreviewDownloadError(Exception):
     """Raised when preview download fails."""
+    pass
+
+class DeezerAPIError(Exception):
+    """Raised when there's an issue with the Deezer API."""
     pass
 
 # Load environment variables
@@ -54,6 +59,66 @@ try:
 except Exception as e:
     logger.error(f"Failed to initialize CLAP model: {e}")
     raise
+
+def get_preview_url_from_deezer(track_info: Dict[str, Any]) -> Optional[str]:
+    """
+    Fetch a preview URL from the Deezer API based on track information.
+    
+    Args:
+        track_info (Dict[str, Any]): Track information containing at least artist_name and track_name
+        
+    Returns:
+        Optional[str]: URL to the preview audio or None if not found
+    """
+    try:
+        # Extract search terms
+        artist_name = track_info.get("artist")
+        track_name = track_info.get("title")
+        
+        if not artist_name or not track_name:
+            logger.warning(f"Missing artist_name or track_name for track {track_info.get('id')}")
+            return None
+        
+        # Build search query
+        query = f'artist:"{artist_name}" track:"{track_name}"'
+        encoded_query = urllib.parse.quote(query)
+        search_url = f"https://api.deezer.com/search?q={encoded_query}"
+        
+        # Make request
+        logger.info(f"Searching Deezer API for: {artist_name} - {track_name}")
+        response = requests.get(search_url, timeout=30)
+        response.raise_for_status()
+        
+        # Parse response
+        search_results = response.json()
+        
+        if 'error' in search_results:
+            logger.warning(f"Deezer API error: {search_results['error']}")
+            return None
+            
+        if not search_results.get('data') or len(search_results['data']) == 0:
+            logger.warning(f"No results found for {artist_name} - {track_name}")
+            return None
+            
+        # Get preview URL from first result
+        preview_url = search_results['data'][0].get('preview')
+        
+        if not preview_url:
+            logger.warning(f"No preview URL found for {artist_name} - {track_name}")
+            return None
+            
+        logger.info(f"Found preview URL for {artist_name} - {track_name}")
+        return preview_url
+        
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Request to Deezer API failed: {e}")
+        raise DeezerAPIError(f"Failed to fetch from Deezer API: {e}")
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse Deezer API response: {e}")
+        raise DeezerAPIError(f"Failed to parse Deezer API response: {e}")
+    except Exception as e:
+        logger.error(f"Unexpected error with Deezer API: {e}")
+        raise DeezerAPIError(f"Unexpected error with Deezer API: {e}")
 
 def download_and_process_audio(audio_url: str) -> np.ndarray:
     """Download and process audio from a URL into an embedding."""
@@ -82,6 +147,7 @@ def download_and_process_audio(audio_url: str) -> np.ndarray:
         inputs = processor(
             audios=audio_array,
             sampling_rate=48000,
+            padding=True,
             return_tensors="pt"
         )
         
@@ -105,6 +171,7 @@ def download_and_process_audio(audio_url: str) -> np.ndarray:
 def save_embedding(id: str, embedding: np.ndarray, audio_url: str, metadata: Dict[str, Any]) -> None:
     """Save embedding to vector store."""
     try:
+        # Initialize the SupabaseVectorStore
         vector_store = SupabaseVectorStore(
             id=id,
             table_name="song_embeddings",
@@ -113,12 +180,36 @@ def save_embedding(id: str, embedding: np.ndarray, audio_url: str, metadata: Dic
             metadata_columns=metadata.items() if metadata else []
         )
         
-        vector_store.add_embeddings(
-            embeddings=[embedding[0]],
-            contents=[audio_url],
-            metadata=[metadata] if metadata else [{}]
-        )
-        logger.info(f"Stored embedding in vector database with ID: {id}")
+        # Get direct access to the Supabase client
+        client = vector_store.client
+        
+        # Check if the record already exists
+        response = client.table("song_embeddings").select("id").eq("id", id).execute()
+        record_exists = response.data and len(response.data) > 0
+        
+        if record_exists:
+            # Update existing record with the embedding
+            logger.info(f"Record with ID {id} already exists, updating embedding")
+            update_data = {
+                "embedding": embedding[0].tolist(),
+                "preview_url": audio_url
+            }
+            # Update metadata fields if provided
+            if metadata:
+                update_data.update(metadata)
+                
+            response = client.table("song_embeddings").update(update_data).eq("id", id).execute()
+            if hasattr(response, 'error') and response.error:
+                raise SupabaseConnectionError(f"Failed to update embedding: {json.dumps(response.error)}")
+            logger.info(f"Updated embedding in vector database for ID: {id}")
+        else:
+            # Insert new record
+            vector_store.add_embeddings(
+                embeddings=[embedding[0]],
+                contents=[audio_url],
+                metadata=[metadata] if metadata else [{}]
+            )
+            logger.info(f"Stored new embedding in vector database with ID: {id}")
         
     except Exception as e:
         logger.error(f"Failed to store embedding in vector database: {e}")
@@ -177,13 +268,9 @@ def process_user_tracks(user_id: str) -> Dict[str, Any]:
         # Process each track
         for track in unembedded_tracks:
             try:
-                # Check if we have all required fields
-                if not track.get("preview_url"):
-                    logger.warning(f"Track {track.get('id')} has no preview URL, skipping")
-                    failed_tracks.append({
-                        "id": track.get("id"),
-                        "reason": "No preview URL"
-                    })
+                track_id = track.get("id")
+                if not track_id:
+                    logger.warning("Track missing ID, skipping")
                     continue
                 
                 # Extract metadata fields
@@ -192,20 +279,42 @@ def process_user_tracks(user_id: str) -> Dict[str, Any]:
                     if key not in ["id", "preview_url", "embedding", "created_at", "updated_at"]
                 }
                 
+                # Check if we have a preview_url, if not, fetch from Deezer
+                preview_url = track.get("preview_url")
+                if not preview_url:
+                    logger.info(f"Track {track_id} has no preview URL, fetching from Deezer")
+                    preview_url = get_preview_url_from_deezer(track)
+                    
+                    if not preview_url:
+                        logger.warning(f"Unable to find preview URL for track {track_id}, skipping")
+                        failed_tracks.append({
+                            "id": track_id,
+                            "reason": "Could not find preview URL from Deezer"
+                        })
+                        continue
+                    
+                    # Update the track with the preview URL
+                    try:
+                        client.table("song_embeddings").update({"preview_url": preview_url}).eq("id", track_id).execute()
+                        logger.info(f"Updated track {track_id} with preview URL from Deezer")
+                    except Exception as e:
+                        logger.warning(f"Failed to update track {track_id} with preview URL: {e}")
+                
                 # Process the track
                 process_track_with_metadata(
-                    id=track.get("id"),
-                    audio_url=track.get("preview_url"),
+                    id=track_id,
+                    audio_url=preview_url,
                     metadata=metadata
                 )
                 
                 processed_count += 1
-                logger.info(f"Processed track {track.get('id')} ({processed_count}/{len(unembedded_tracks)})")
+                logger.info(f"Processed track {track_id} ({processed_count}/{len(unembedded_tracks)})")
                 
             except Exception as e:
-                logger.error(f"Failed to process track {track.get('id')}: {str(e)}")
+                track_id = track.get("id", "unknown")
+                logger.error(f"Failed to process track {track_id}: {str(e)}")
                 failed_tracks.append({
-                    "id": track.get("id"),
+                    "id": track_id,
                     "reason": str(e)
                 })
         
