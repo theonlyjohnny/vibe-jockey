@@ -267,7 +267,7 @@ export async function GET(request: NextRequest) {
         const now = new Date();
         
         // If the user was created within the last minute, consider it a new sign-up
-        const isNewUser = (now.getTime() - createdAt.getTime()) < 60000 || process.env.NODE_ENV === 'development';
+        const isNewUser = (now.getTime() - createdAt.getTime()) < 60000 || process.env.NODE_ENV === 'development' || true; // FOr now, always index on login
         
         if (isNewUser) {
           console.log("New user detected, triggering background track processing");
