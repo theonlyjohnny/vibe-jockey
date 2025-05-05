@@ -167,7 +167,7 @@ def save_embedding(id: str, embedding: np.ndarray, audio_url: str, metadata: Dic
             id=id,
             table_name="song_embeddings",
             embedding_column="embedding",
-            content_column="preview_url",
+            content_column="content",
             metadata_columns=metadata.items() if metadata else []
         )
         
@@ -182,8 +182,7 @@ def save_embedding(id: str, embedding: np.ndarray, audio_url: str, metadata: Dic
             # Update existing record with the embedding
             logger.info(f"Record with ID {id} already exists, updating embedding")
             update_data = {
-                "embedding": embedding[0].tolist(),
-                "preview_url": audio_url
+                "embedding": embedding[0].tolist()
             }
             # Update metadata fields if provided
             if metadata:
@@ -197,7 +196,7 @@ def save_embedding(id: str, embedding: np.ndarray, audio_url: str, metadata: Dic
             # Insert new record
             vector_store.add_embeddings(
                 embeddings=[embedding[0]],
-                contents=[audio_url],
+                contents=[""],
                 metadata=[metadata] if metadata else [{}]
             )
             logger.info(f"Stored new embedding in vector database with ID: {id}")
@@ -276,29 +275,20 @@ def process_user_tracks(user_id: str) -> Dict[str, Any]:
                 # Extract metadata fields
                 metadata = {
                     key: track.get(key) for key in track 
-                    if key not in ["id", "preview_url", "embedding", "created_at", "updated_at"]
+                    if key not in ["id", "embedding", "created_at", "updated_at"]
                 }
                 
-                # Check if we have a preview_url, if not, fetch from Deezer
-                preview_url = track.get("preview_url")
+                # Fetch from Deezer
+                logger.info(f"Track {track_id} needs processing, fetching from Deezer")
+                preview_url = get_preview_url_from_deezer(track)
+                    
                 if not preview_url:
-                    logger.info(f"Track {track_id} has no preview URL, fetching from Deezer")
-                    preview_url = get_preview_url_from_deezer(track)
-                    
-                    if not preview_url:
-                        logger.warning(f"Unable to find preview URL for track {track_id}, skipping")
-                        failed_tracks.append({
-                            "id": track_id,
-                            "reason": "Could not find preview URL from Deezer"
-                        })
-                        continue
-                    
-                    # Update the track with the preview URL
-                    try:
-                        client.table("song_embeddings").update({"preview_url": preview_url}).eq("id", track_id).execute()
-                        logger.info(f"Updated track {track_id} with preview URL from Deezer")
-                    except Exception as e:
-                        logger.warning(f"Failed to update track {track_id} with preview URL: {e}")
+                    logger.warning(f"Unable to find preview URL for track {track_id}, skipping")
+                    failed_tracks.append({
+                        "id": track_id,
+                        "reason": "Could not find preview URL from Deezer"
+                    })
+                    continue
                 
                 # Process the track
                 process_track_with_metadata(

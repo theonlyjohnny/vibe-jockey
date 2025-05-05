@@ -52,7 +52,6 @@ export async function POST(request: Request) {
         return {
           songID: song.id,
           vibeScore: vibeScore,
-          previewURL: song.preview_url,
           title: song.title || 'Unknown Title',
           artist: song.artist || 'Unknown Artist',
           similarity: song.similarity || 0

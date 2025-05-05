@@ -348,7 +348,6 @@ class SupabaseVectorStore:
                 songs.append(
                     SongMetadata(
                         id=row['id'],
-                        preview_url=row.get('preview_url'),
                         title=row.get('title', 'Unknown Title'),
                         artist=row.get('artist', 'Unknown Artist'),
                         similarity=float(row['similarity']),

@@ -7,7 +7,6 @@ CREATE TABLE IF NOT EXISTS song_embeddings (
     embedding vector(768),  -- CLAP default dimension
     title TEXT,
     artist TEXT,
-    preview_url TEXT,
     user_id uuid,
 
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
@@ -29,7 +28,6 @@ CREATE OR REPLACE FUNCTION match_embeddings(
 
 RETURNS TABLE (
     id text,
-    preview_url text,
     title text,
     artist text,
     similarity float
@@ -40,7 +38,6 @@ BEGIN
     RETURN QUERY
     SELECT
         song_embeddings.id,
-        song_embeddings.preview_url,
         song_embeddings.title,
         song_embeddings.artist,
         1 - (song_embeddings.embedding <=> query_embedding) as similarity

@@ -10,7 +10,6 @@ interface SpotifyTrack {
     name: string;
     // genres are not available at this level in the API
   };
-  preview_url: string | null;
 }
 
 interface SavedTrack {

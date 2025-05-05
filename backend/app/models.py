@@ -20,7 +20,6 @@ class SongQueueRequest(BaseModel):
 
 class SongMetadata(BaseModel):
     id: str
-    preview_url: Optional[str]
     title: str
     artist: str
     similarity: float

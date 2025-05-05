@@ -7,7 +7,6 @@ export type Trait = {
 export type QueueSong = {
   songID: string;
   vibeScore: number;
-  previewURL?: string;
   title?: string;
   artist?: string;
   similarity?: number;
