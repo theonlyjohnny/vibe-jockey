@@ -1,4 +1,4 @@
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 import numpy as np
 from supabase import create_client
 from dotenv import load_dotenv
@@ -6,6 +6,7 @@ import os
 import logging
 from supabase.lib.client_options import ClientOptions
 import json
+from .models import SongMetadata
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -272,4 +273,92 @@ class SupabaseVectorStore:
         except Exception as e:
             error_msg = f"Error during delete operation: {str(e)}"
             logger.error(error_msg)
-            raise SupabaseConnectionError(error_msg) from e 
+            raise SupabaseConnectionError(error_msg) from e
+
+    def normalize_vector(self, vector: np.ndarray) -> np.ndarray:
+        """Normalize a vector to unit length."""
+        norm = np.linalg.norm(vector)
+        if norm == 0:
+            return vector
+        return vector / norm
+
+    def combine_trait_vectors(self, trait_embeddings: List[Tuple[np.ndarray, float]]) -> np.ndarray:
+        """Combine multiple trait embeddings with their weights."""
+        if not trait_embeddings:
+            raise ValueError("No trait embeddings provided")
+        
+        # Weight and sum the embeddings
+        weighted_sum = np.zeros_like(trait_embeddings[0][0])
+        for embedding, weight in trait_embeddings:
+            weighted_sum += weight * embedding
+        
+        # Normalize to unit length
+        return self.normalize_vector(weighted_sum)
+
+    def find_similar_songs(
+        self,
+        trait_vector: np.ndarray,
+        match_count: int,
+        match_threshold: float = 0.5,
+        exclude_song_id: Optional[str] = None,
+        trait_names: Optional[List[str]] = None,
+        trait_embeddings: Optional[List[np.ndarray]] = None
+    ) -> List[SongMetadata]:
+        """Find similar songs using the match_embeddings function.
+        
+        Args:
+            trait_vector (np.ndarray): The trait vector to match against
+            match_count (int): Number of songs to return
+            match_threshold (float): Minimum similarity threshold (0 to 1)
+            exclude_song_id (str, optional): Song ID to exclude from results
+            
+        Returns:
+            List[SongMetadata]: List of matching songs with metadata
+            
+        Raises:
+            SupabaseConnectionError: If Supabase operation fails
+        """
+        try:
+            # Convert numpy array to list for Supabase
+            vector_list = trait_vector.tolist()
+            
+            # Call the match_embeddings function via RPC
+            response = self.client.rpc(
+                'match_embeddings',
+                {
+                    'query_embedding': vector_list,
+                    'match_threshold': match_threshold,
+                    'match_count': match_count,
+                    'exclude_song_id': exclude_song_id
+                }
+            ).execute()
+            
+            if hasattr(response, 'error') and response.error:
+                error_msg = f"Supabase query failed: {json.dumps(response.error)}"
+                logger.error(error_msg)
+                raise SupabaseConnectionError(error_msg)
+            
+            # Convert results to SongMetadata objects
+            songs = []
+            for row in response.data:
+                # Get the similarity score and normalize to 0-1 range
+                similarity = float(row['similarity'])
+                vibeScore = (similarity + 1) / 2
+                
+                songs.append(
+                    SongMetadata(
+                        id=row['id'],
+                        preview_url=row.get('preview_url'),
+                        title=row.get('title', 'Unknown Title'),
+                        artist=row.get('artist', 'Unknown Artist'),
+                        similarity=float(row['similarity']),
+                        vibeScore=vibeScore
+                    )
+                )
+            
+            return songs
+            
+        except Exception as e:
+            error_msg = f"Error during similarity search: {str(e)}"
+            logger.error(error_msg)
+            raise SupabaseConnectionError(error_msg) from e

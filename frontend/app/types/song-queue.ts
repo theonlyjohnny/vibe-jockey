@@ -4,13 +4,13 @@ export type Trait = {
   value: number;
 };
 
-export type TraitValues = {
-  [key: string]: number;
-};
-
 export type QueueSong = {
   songID: string;
-  traitValues: TraitValues;
+  vibeScore: number;
+  previewURL?: string;
+  title?: string;
+  artist?: string;
+  similarity?: number;
 };
 
 export type SongQueueRequest = {

@@ -4,18 +4,14 @@ import json
 import logging
 import torch
 import numpy as np
-from transformers import ClapModel, ClapProcessor
 import librosa
 import io
 from pydub import AudioSegment
 from dotenv import load_dotenv
 from typing import List, Dict, Any, Optional
 import urllib.parse
-
-# Import from parent directory module
-import sys
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from vector_store import SupabaseVectorStore, SupabaseConnectionError
+from .vector_store import SupabaseVectorStore, SupabaseConnectionError
+from .model_loader import load_model, ModelNotAvailableError, device
 
 # Set up logging
 logging.basicConfig(
@@ -49,16 +45,6 @@ required_env_vars = {
 missing_vars = [var for var, value in required_env_vars.items() if not value]
 if missing_vars:
     raise ValueError(f"Missing required environment variables: {', '.join(missing_vars)}")
-
-# Set up CLAP model
-try:
-    device = torch.device("cpu")
-    logger.info("Using CPU for CLAP model")
-    model = ClapModel.from_pretrained("laion/larger_clap_music_and_speech").to(device)
-    processor = ClapProcessor.from_pretrained("laion/larger_clap_music_and_speech")
-except Exception as e:
-    logger.error(f"Failed to initialize CLAP model: {e}")
-    raise
 
 def get_preview_url_from_deezer(track_info: Dict[str, Any]) -> Optional[str]:
     """
@@ -123,6 +109,9 @@ def get_preview_url_from_deezer(track_info: Dict[str, Any]) -> Optional[str]:
 def download_and_process_audio(audio_url: str) -> np.ndarray:
     """Download and process audio from a URL into an embedding."""
     try:
+        # Load model using shared loader
+        current_model, current_processor = load_model()
+        
         # Stream audio data
         logger.info(f"Streaming from: {audio_url}")
         response = requests.get(audio_url, timeout=30)
@@ -144,7 +133,7 @@ def download_and_process_audio(audio_url: str) -> np.ndarray:
             raise AudioProcessingError("Audio file is empty")
         
         # Process audio
-        inputs = processor(
+        inputs = current_processor(
             audios=audio_array,
             sampling_rate=48000,
             padding=True,
@@ -156,7 +145,7 @@ def download_and_process_audio(audio_url: str) -> np.ndarray:
         
         # Generate embeddings
         with torch.no_grad():
-            audio_embeddings = model.get_audio_features(**inputs)
+            audio_embeddings = current_model.get_audio_features(**inputs)
         
         embedding = audio_embeddings.detach().cpu().numpy()
         return embedding
@@ -164,6 +153,8 @@ def download_and_process_audio(audio_url: str) -> np.ndarray:
     except requests.exceptions.RequestException as e:
         raise PreviewDownloadError(f"Failed to download audio: {e}")
     except AudioProcessingError:
+        raise
+    except ModelNotAvailableError:
         raise
     except Exception as e:
         raise AudioProcessingError(f"Unexpected error processing audio: {e}")
@@ -227,19 +218,15 @@ def process_track_with_metadata(id: str, audio_url: str, metadata: Dict[str, Any
         save_embedding(id, embedding, audio_url, metadata or {})
         
         logger.info(f"Successfully processed track with ID: {id}")
+    except ModelNotAvailableError as e:
+        logger.error(f"Model not available: {str(e)}")
+        raise
     except Exception as e:
         logger.error(f"Error processing track: {str(e)}")
         raise
 
 def process_user_tracks(user_id: str) -> Dict[str, Any]:
-    """Process all unembedded tracks for a specific user.
-    
-    Args:
-        user_id (str): The user ID to process tracks for
-        
-    Returns:
-        Dict[str, Any]: Status information about the processing
-    """
+    """Process all unembedded tracks for a specific user."""
     try:
         logger.info(f"Processing unembedded tracks for user: {user_id}")
         
@@ -264,6 +251,19 @@ def process_user_tracks(user_id: str) -> Dict[str, Any]:
         
         processed_count = 0
         failed_tracks = []
+        
+        # First, let's check if model is available
+        try:
+            load_model()
+        except ModelNotAvailableError as e:
+            logger.error(f"Model not available, cannot process tracks: {e}")
+            return {
+                "status": "failed",
+                "reason": f"Model not available: {str(e)}",
+                "total_tracks": len(unembedded_tracks),
+                "processed_tracks": 0,
+                "user_id": user_id
+            }
         
         # Process each track
         for track in unembedded_tracks:
