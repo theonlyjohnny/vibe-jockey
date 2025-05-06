@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
+import { inngest } from '../../../api/inngest/route'; // Import the renamed Inngest client
 
 interface SpotifyTrack {
   id: string;
@@ -149,30 +150,18 @@ async function processUserTracks(userId: string, providerToken: string, supabase
   }
 }
 
-// Function to trigger background processing
-function triggerBackgroundProcessing(userId: string, providerToken: string, supabaseUrl: string, supabaseKey: string) {
-  // Create a lightweight supabase client for the background process
-  const backgroundSupabase = createServerClient(
-    supabaseUrl,
-    supabaseKey,
-    {
-      cookies: {
-        getAll() { return []; },
-        setAll() { /* no-op */ }
-      }
+// Function to trigger background processing via Inngest
+function triggerBackgroundProcessing(userId: string, providerToken: string) {
+  // Send an event to Inngest to handle the background processing
+  inngest.send({
+    name: "app/user.tracks.process",
+    data: {
+      userId,
+      providerToken
     }
-  );
-  
-  // We're deliberately not awaiting this Promise so it runs in background
-  (async () => {
-    try {
-      console.log(`[Background] Starting track processing for user ${userId}`);
-      await processUserTracks(userId, providerToken, backgroundSupabase);
-      console.log(`[Background] Completed track processing for user ${userId}`);
-    } catch (error) {
-      console.error(`[Background] Error processing tracks for user ${userId}:`, error);
-    }
-  })();
+  }).catch((error: Error) => {
+    console.error("Failed to send event to Inngest:", error);
+  });
   
   return { status: "processing_started" };
 }
@@ -266,17 +255,15 @@ export async function GET(request: NextRequest) {
         const now = new Date();
         
         // If the user was created within the last minute, consider it a new sign-up
-        const isNewUser = (now.getTime() - createdAt.getTime()) < 60000 || process.env.NODE_ENV === 'development' || true; // FOr now, always index on login
+        const isNewUser = (now.getTime() - createdAt.getTime()) < 60000 || process.env.NODE_ENV === 'development' || true; // For now, always index on login
         
         if (isNewUser) {
-          console.log("New user detected, triggering background track processing");
+          console.log("New user detected, triggering Inngest background processing");
           
-          // Trigger background processing without blocking the response
+          // Trigger background processing via Inngest
           triggerBackgroundProcessing(
             user.id,
-            session.provider_token,
-            process.env.NEXT_PUBLIC_SUPABASE_URL!,
-            process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+            session.provider_token
           );
         } else {
           console.log("Returning user, skipping track processing");
