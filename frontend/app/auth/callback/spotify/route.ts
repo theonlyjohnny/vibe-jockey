@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
-import { inngest } from '../../../api/inngest/route'; // Import the renamed Inngest client
+import { inngest } from '@/lib/inngest'; // Import from the lib file
 
 interface SpotifyTrack {
   id: string;

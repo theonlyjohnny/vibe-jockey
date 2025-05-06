@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { SongQueueRequest } from '../../types/song-queue';
-import { inngest } from '../inngest/route';
+import { inngest } from '@/lib/inngest';
 
 // Process API request
 export async function POST(request: Request) {
