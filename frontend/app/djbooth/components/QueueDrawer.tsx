@@ -15,7 +15,7 @@ export default function QueueDrawer({
   setTransitionLength 
 }: QueueDrawerProps) {
   const [isOpen, setIsOpen] = useState(false);
-  const [currentSong, setCurrentSong] = useState('');
+  const [currentSong, setCurrentSong] = useState('80purppp_hex');
   const [traits, setTraits] = useState([
     { name: 'energy', value: 0.5 },
     { name: 'danceability', value: 0.5 },
@@ -27,8 +27,10 @@ export default function QueueDrawer({
       const requestData: SongQueueRequest = {
         currentSong,
         traits,
-        transitionLength
+        transitionLength: Math.floor(transitionLength) // Ensure it's a whole number
       };
+
+      console.log('Sending request with data:', requestData);
 
       const response = await fetch('/api/song-queue', {
         method: 'POST',
@@ -43,6 +45,14 @@ export default function QueueDrawer({
       }
 
       const data = await response.json();
+      console.log('Received queue data:', data);
+      
+      if (!data.queue || !Array.isArray(data.queue)) {
+        console.error('Invalid queue data received:', data);
+        throw new Error('Invalid queue data received');
+      }
+
+      console.log('Queue length:', data.queue.length);
       onQueueGenerated(data.queue);
     } catch (error) {
       console.error('Error generating queue:', error);
@@ -70,11 +80,13 @@ export default function QueueDrawer({
         </div>
 
         <div>
-          <label className="block text-sm font-medium mb-1">Transition Length (seconds)</label>
+          <label className="block text-sm font-medium mb-1">Number of Songs</label>
           <input
             type="number"
+            min="1"
+            max="20"
             value={transitionLength}
-            onChange={(e) => setTransitionLength(Number(e.target.value))}
+            onChange={(e) => setTransitionLength(Math.max(1, Math.min(20, Number(e.target.value))))}
             className="w-full px-3 py-2 bg-gray-700 rounded"
           />
         </div>

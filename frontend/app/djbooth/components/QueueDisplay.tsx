@@ -8,14 +8,17 @@ interface QueueDisplayProps {
 }
 
 export default function QueueDisplay({ queue, transitionLength }: QueueDisplayProps) {
+  // Only show up to 5 songs
+  const displayQueue = queue.slice(0, 5);
+
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-      {queue.map((song, index) => (
+    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+      {displayQueue.map((song, index) => (
         <div
           key={song.songID}
           className="bg-gray-800 p-4 rounded-lg shadow-lg"
           style={{
-            animation: `fadeIn 0.5s ease-in-out ${index * (transitionLength / queue.length)}s forwards`,
+            animation: `fadeIn 0.5s ease-in-out ${index * 0.5}s forwards`,
             opacity: 0
           }}
         >
