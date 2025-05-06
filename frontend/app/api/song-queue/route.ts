@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
 import { SongQueueRequest } from '../../types/song-queue';
-import { inngest } from '@/lib/inngest';
 
 // Process API request
 export async function POST(request: Request) {
@@ -15,22 +14,48 @@ export async function POST(request: Request) {
       );
     }
 
-    // Send the event to Inngest
-    await inngest.send({
-      name: 'app/song-queue.requested',
-      data: requestData
+    // Prepare backend request
+    const backendRequest = {
+      current_song_id: requestData.currentSong,
+      traits: requestData.traits.map((trait) => ({
+        name: trait.name,
+        value: Math.max(0, Math.min(1, trait.value))
+      })),
+      transition_length: requestData.transitionLength
+    };
+
+    // Call backend API directly
+    const queueResponse = await fetch(`${process.env.BACKEND_API_URL}/api/queue`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.BACKEND_API_KEY}`
+      },
+      body: JSON.stringify(backendRequest)
     });
     
-    // Return immediately with an acknowledgment
-    return NextResponse.json({ 
-      message: 'Queue generation started',
-      jobId: `${requestData.currentSong}-${Date.now()}`
+    if (!queueResponse.ok) {
+      throw new Error(`Failed to generate song queue: ${queueResponse.statusText}`);
+    }
+    
+    const response = await queueResponse.json();
+    
+    // Transform and return response
+    return NextResponse.json({
+      queue: response.songs.map((song: any) => ({
+        songID: song.id,
+        vibeScore: song.vibeScore,
+        previewURL: song.preview_url,
+        title: song.title || 'Unknown Title',
+        artist: song.artist || 'Unknown Artist',
+        similarity: song.similarity || 0
+      }))
     });
     
   } catch (error) {
-    console.error('Error initiating song queue generation:', error);
+    console.error('Error generating song queue:', error);
     return NextResponse.json(
-      { error: 'Failed to initiate song queue generation' },
+      { error: 'Failed to generate song queue' },
       { status: 500 }
     );
   }
