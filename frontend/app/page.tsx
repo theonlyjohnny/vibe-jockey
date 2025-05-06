@@ -1,6 +1,5 @@
 import Link from 'next/link';
 import SpotifyLoginButton from './components/SpotifyLoginButton';
-import SpotifyPlayer from './components/SpotifyPlayer';
 import AuthButton from './components/AuthButton';
 import { createClient } from './utils/supabase/server';
 
@@ -71,7 +70,15 @@ export default async function Home() {
     if (session?.user && session?.provider_token) {
       return (
         <PlayerLayout>
-          <SpotifyPlayer />
+          <div className="flex flex-col items-center justify-center w-full gap-4">
+            <p className="text-lg text-gray-700 dark:text-gray-300">Welcome to Vibe Jockey!</p>
+            <Link 
+              href="/djbooth" 
+              className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors duration-200 font-medium"
+            >
+              Enter DJ Booth
+            </Link>
+          </div>
         </PlayerLayout>
       );
     }

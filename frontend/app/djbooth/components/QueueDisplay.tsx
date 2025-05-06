@@ -1,9 +1,9 @@
 'use client';
 
-import { Song } from '../../types/song-queue';
-import { useEffect, useState } from 'react';
+import { useState, useEffect } from 'react';
 import { createClient } from '../../utils/supabase/client';
 import AuthButton from '../../components/AuthButton';
+import { Song } from '../../types/song-queue';
 
 interface QueueDisplayProps {
   queue: Song[];
@@ -22,101 +22,175 @@ interface SpotifyTrack {
   artists: { name: string }[];
 }
 
+declare global {
+  interface Window {
+    Spotify: any;
+    onSpotifyWebPlaybackSDKReady: () => void;
+  }
+}
+
+function FadingPopup({ message, duration = 3000 }: { message: string; duration?: number }) {
+  const [isVisible, setIsVisible] = useState(true);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setIsVisible(false);
+    }, duration);
+
+    return () => clearTimeout(timer);
+  }, [duration]);
+
+  if (!isVisible) return null;
+
+  return (
+    <div className="fixed top-4 right-4 z-50 animate-fade-out">
+      <div className="bg-red-500 text-white px-6 py-3 rounded-lg shadow-lg">
+        {message}
+      </div>
+    </div>
+  );
+}
+
 export default function QueueDisplay({ queue, transitionLength, onCurrentTrackChange }: QueueDisplayProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [currentTrack, setCurrentTrack] = useState<SpotifyTrack | null>(null);
-  const [isPlaying, setIsPlaying] = useState(false);
   const [needsAuth, setNeedsAuth] = useState(false);
+  const [player, setPlayer] = useState<any>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [currentTrack, setCurrentTrack] = useState<SpotifyTrack | null>(null);
+  const [popupMessage, setPopupMessage] = useState<string | null>(null);
+  const supabase = createClient();
 
-  // Function to get a valid Spotify token
-  const getValidToken = async () => {
-    const supabase = createClient();
-    const { data: { session } } = await supabase.auth.getSession();
-    
-    if (!session?.provider_token) {
-      const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
-      
-      if (refreshError || !refreshData.session?.provider_token) {
-        throw new Error('Failed to refresh token');
-      }
-      
-      return refreshData.session.provider_token;
-    }
-    
-    return session.provider_token;
-  };
-
-  // Function to fetch the current Spotify track
-  const fetchCurrentTrack = async () => {
-    try {
-      const token = await getValidToken();
-      
-      const response = await fetch('https://api.spotify.com/v1/me/player/currently-playing', {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
-
-      if (!response.ok) {
-        if (response.status === 403) {
-          setNeedsAuth(true);
-          throw new Error('Missing playback permissions. Please sign in again.');
-        }
-        throw new Error('Failed to fetch current track');
-      }
-
-      const data = await response.json();
-      if (data.item) {
-        setCurrentTrack(data.item);
-        setIsPlaying(!data.is_playing);
-        onCurrentTrackChange?.(data.item.id);
-      }
-    } catch (err) {
-      console.error('Error fetching current track:', err);
-      if (err instanceof Error && err.message.includes('Missing playback permissions')) {
-        setError(err.message);
-      }
-    }
-  };
-
-  // Function to toggle play/pause
-  const togglePlayback = async () => {
-    try {
-      const token = await getValidToken();
-      
-      const response = await fetch('https://api.spotify.com/v1/me/player/' + (isPlaying ? 'pause' : 'play'), {
-        method: 'PUT',
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
-
-      if (!response.ok) {
-        if (response.status === 403) {
-          setNeedsAuth(true);
-          throw new Error('Missing playback permissions. Please sign in again.');
-        }
-        throw new Error('Failed to toggle playback');
-      }
-
-      setIsPlaying(!isPlaying);
-    } catch (err) {
-      console.error('Error toggling playback:', err);
-      if (err instanceof Error && err.message.includes('Missing playback permissions')) {
-        setError(err.message);
-      } else {
-        setError('Failed to toggle playback');
-      }
-    }
-  };
-
-  // Initial fetch and periodic updates
+  // Check queue length against transition length
   useEffect(() => {
-    fetchCurrentTrack();
-    const interval = setInterval(fetchCurrentTrack, 5000); // Update every 5 seconds
-    return () => clearInterval(interval);
-  }, [onCurrentTrackChange]);
+    if (queue.length > 0 && queue.length < transitionLength) {
+      setPopupMessage(`Queue length (${queue.length}) is less than the transition length (${transitionLength}). Some transitions may be skipped.`);
+    }
+  }, [queue.length, transitionLength]);
+
+  useEffect(() => {
+    const script = document.createElement("script");
+    script.src = "https://sdk.scdn.co/spotify-player.js";
+    script.async = true;
+
+    document.body.appendChild(script);
+
+    window.onSpotifyWebPlaybackSDKReady = () => {
+      initializePlayer();
+    };
+
+    return () => {
+      document.body.removeChild(script);
+    };
+  }, []);
+
+  const initializePlayer = async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      if (!session?.provider_token) {
+        setError('No Spotify access token available');
+        return;
+      }
+
+      const player = new window.Spotify.Player({
+        name: 'Vibe Jockey Web Player',
+        getOAuthToken: (cb: (token: string) => void) => { 
+          if (session.provider_token) {
+            cb(session.provider_token);
+          }
+        },
+        volume: 0.5
+      });
+
+      // Error handling
+      player.addListener('initialization_error', ({ message }: { message: string }) => {
+        console.error('Failed to initialize:', message);
+        setError('Failed to initialize Spotify player');
+      });
+
+      player.addListener('authentication_error', ({ message }: { message: string }) => {
+        console.error('Failed to authenticate:', message);
+        setError('Failed to authenticate with Spotify');
+        setNeedsAuth(true);
+      });
+
+      player.addListener('account_error', ({ message }: { message: string }) => {
+        console.error('Failed to validate Spotify account:', message);
+        setError('Failed to validate Spotify account');
+      });
+
+      player.addListener('playback_error', ({ message }: { message: string }) => {
+        console.error('Failed to perform playback:', message);
+        setError('Failed to perform playback');
+      });
+
+      // Playback status updates
+      player.addListener('player_state_changed', (state: any) => {
+        if (!state) return;
+        
+        const track = state.track_window.current_track;
+        setCurrentTrack(track);
+        setIsPlaying(!state.paused);
+        if (track && onCurrentTrackChange) {
+          onCurrentTrackChange(formatTrackId(track));
+        }
+      });
+
+      // Ready
+      player.addListener('ready', ({ device_id }: { device_id: string }) => {
+        console.log('Ready with Device ID', device_id);
+        // Transfer playback to this device
+        fetch('https://api.spotify.com/v1/me/player', {
+          method: 'PUT',
+          headers: {
+            'Authorization': `Bearer ${session.provider_token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            device_ids: [device_id],
+            play: false
+          })
+        });
+      });
+
+      // Not Ready
+      player.addListener('not_ready', ({ device_id }: { device_id: string }) => {
+        console.log('Device ID has gone offline', device_id);
+      });
+
+      // Connect to the player!
+      const connected = await player.connect();
+      if (connected) {
+        setPlayer(player);
+      }
+    } catch (error) {
+      console.error('Error initializing player:', error);
+      setError('Failed to initialize Spotify player');
+    }
+  };
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    window.location.href = '/'; // Redirect to home page after logout
+  };
+
+  const formatTrackId = (track: SpotifyTrack): string => {
+    const artist = track.artists[0]?.name || 'Unknown Artist';
+    const title = track.name;
+    return `${artist.toLowerCase().replace(/[^\w\s]/g, '').replace(/\s+/g, '_')}_${title.toLowerCase().replace(/[^\w\s]/g, '').replace(/\s+/g, '_')}`;
+  };
+
+  const togglePlayback = async () => {
+    if (!player) return;
+
+    try {
+      await player.togglePlay();
+    } catch (error) {
+      console.error('Error toggling playback:', error);
+      setError('Failed to toggle playback');
+    }
+  };
 
   if (isLoading) {
     return (
@@ -141,6 +215,18 @@ export default function QueueDisplay({ queue, transitionLength, onCurrentTrackCh
 
   return (
     <div className="space-y-6">
+      {popupMessage && <FadingPopup message={popupMessage} />}
+      
+      {/* Logout Button */}
+      <div className="flex justify-end">
+        <button
+          onClick={handleLogout}
+          className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
+        >
+          Logout
+        </button>
+      </div>
+
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
         {/* Current Spotify Track */}
         {currentTrack && (
@@ -173,7 +259,7 @@ export default function QueueDisplay({ queue, transitionLength, onCurrentTrackCh
             <p className="text-gray-400">
               {currentTrack.artists.map(artist => artist.name).join(', ')}
             </p>
-            <p className="text-xs text-gray-500 mt-2">ID: {currentTrack.id}</p>
+            <p className="text-xs text-gray-500 mt-2">ID: {formatTrackId(currentTrack)}</p>
           </button>
         )}
 

@@ -7,7 +7,7 @@ import { Song } from '../types/song-queue';
 
 export default function DJBooth() {
   const [queue, setQueue] = useState<Song[]>([]);
-  const [transitionLength, setTransitionLength] = useState<number>(30);
+  const [transitionLength, setTransitionLength] = useState<number>(3);
   const [currentTrackId, setCurrentTrackId] = useState<string>('');
   const queueDrawerRef = useRef<{ generateQueue: () => Promise<void> }>(null);
 
