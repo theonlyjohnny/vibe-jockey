@@ -138,20 +138,23 @@ export default function QueueDisplay({ queue, transitionLength, onCurrentTrackCh
       });
 
       // Ready
-      player.addListener('ready', ({ device_id }: { device_id: string }) => {
+      player.addListener('ready', async ({ device_id }: { device_id: string }) => {
         console.log('Ready with Device ID', device_id);
-        // Transfer playback to this device
-        fetch('https://api.spotify.com/v1/me/player', {
+        // Transfer playback to this device using server-side API
+        const transferResponse = await fetch('/api/spotify/transfer-playback', {
           method: 'PUT',
           headers: {
-            'Authorization': `Bearer ${session.provider_token}`,
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
-            device_ids: [device_id],
-            play: false
+            device_id: device_id
           })
         });
+
+        if (!transferResponse.ok) {
+          console.error('Failed to transfer playback');
+          setError('Failed to initialize Spotify device');
+        }
       });
 
       // Not Ready
@@ -236,30 +239,38 @@ export default function QueueDisplay({ queue, transitionLength, onCurrentTrackCh
           >
             {currentTrack.album.images[0]?.url && (
               <div className="relative">
-                <img
-                  src={currentTrack.album.images[0].url}
-                  alt={currentTrack.name}
-                  className="w-full aspect-square object-cover rounded-lg mb-4"
-                />
-                <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-0 hover:bg-opacity-40 transition-all duration-300 rounded-lg">
-                  {isPlaying ? (
-                    <svg className="w-16 h-16 text-white opacity-0 group-hover:opacity-100 transition-all duration-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                  ) : (
-                    <svg className="w-16 h-16 text-white opacity-0 group-hover:opacity-100 transition-all duration-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                  )}
+                <div 
+                  className="relative w-full aspect-square rounded-full overflow-hidden mb-4 animate-spin-slow"
+                  style={{ animationPlayState: isPlaying ? 'running' : 'paused' }}
+                >
+                  <img
+                    src={currentTrack.album.images[0].url}
+                    alt={currentTrack.name}
+                    className="w-full h-full object-cover"
+                  />
+                  {/* Disc Border Overlay */}
+                  <div className="absolute inset-0 rounded-full border-8 border-gray-800 shadow-[inset_0_0_20px_rgba(0,0,0,0.5)]"></div>
+                  {/* Play/Pause Overlay */}
+                  <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-0 hover:bg-opacity-40 transition-all duration-300 rounded-full">
+                    {isPlaying ? (
+                      <svg className="w-16 h-16 text-white opacity-0 group-hover:opacity-100 transition-all duration-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                    ) : (
+                      <svg className="w-16 h-16 text-white opacity-0 group-hover:opacity-100 transition-all duration-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                    )}
+                  </div>
                 </div>
+                <h3 className="text-lg font-semibold">{currentTrack.name}</h3>
+                <p className="text-gray-400">
+                  {currentTrack.artists.map(artist => artist.name).join(', ')}
+                </p>
+                <p className="text-xs text-gray-500 mt-2">ID: {formatTrackId(currentTrack)}</p>
               </div>
             )}
-            <h3 className="text-lg font-semibold">{currentTrack.name}</h3>
-            <p className="text-gray-400">
-              {currentTrack.artists.map(artist => artist.name).join(', ')}
-            </p>
-            <p className="text-xs text-gray-500 mt-2">ID: {formatTrackId(currentTrack)}</p>
           </button>
         )}
 
