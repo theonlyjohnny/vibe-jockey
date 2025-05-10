@@ -77,13 +77,13 @@ export const processUserTracks = inngest.createFunction(
       );
       
       // Helper function to sanitize text for ID creation
-      function sanitizeForId(text: string): string {
+      const sanitizeForId = (text: string): string => {
         return text
           .toLowerCase()
           .replace(/[^\w\s]/g, '') // Remove special characters
           .replace(/\s+/g, '_')    // Replace whitespace with underscore
           .trim();
-      }
+      };
       
       // 1. Fetch the user's liked songs from Spotify - in batches to avoid large data payloads
       let hasMoreTracks = true;
